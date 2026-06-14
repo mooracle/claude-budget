@@ -7,8 +7,12 @@ package pricing
 
 import (
 	"encoding/json"
+	"regexp"
 	"strings"
 )
+
+// snapshotSuffix matches a trailing dated snapshot like "-20251001".
+var snapshotSuffix = regexp.MustCompile(`-\d{8}$`)
 
 // Rate is the per-1M-token price for one model, in the rate card's currency (USD).
 type Rate struct {
@@ -47,14 +51,22 @@ func Load(data []byte) (*RateCard, error) {
 	return &rc, nil
 }
 
-// Normalize strips request-routing prefixes and lowercases the model id, so a
-// raw transcript model string matches a rate-card key. No family fallback —
-// an unknown id stays unknown (and prices to 0) rather than being mispriced.
+// Normalize maps a raw transcript model id to its rate-card key. It lowercases,
+// strips request-routing prefixes, and drops two suffix forms that name the same
+// priced model: a context-window tag ("claude-opus-4-8[1m]") and a dated snapshot
+// ("claude-haiku-4-5-20251001"). Both appear verbatim in real Claude Code
+// transcripts, and without this they miss the bare rate-card key and price to 0.
+// This is alias normalization, not a family fallback — an otherwise-unknown id
+// still stays unknown (and prices to 0) rather than borrowing a sibling's rate.
 func Normalize(model string) string {
 	m := strings.ToLower(strings.TrimSpace(model))
 	for _, p := range []string{"claude-code/", "anthropic/", "us.anthropic."} {
 		m = strings.TrimPrefix(m, p)
 	}
+	if i := strings.IndexByte(m, '['); i >= 0 && strings.HasSuffix(m, "]") {
+		m = m[:i] // drop a trailing context-window tag like "[1m]"
+	}
+	m = snapshotSuffix.ReplaceAllString(m, "") // drop a trailing "-YYYYMMDD" snapshot
 	return m
 }
 

@@ -77,8 +77,8 @@ func TestCostUSD_UnknownModelIsZero(t *testing.T) {
 func TestCostUSD_NormalizesModelBeforeLookup(t *testing.T) {
 	rc := testCard()
 	u := Usage{Input: 1_000_000}
-	// Prefixed / cased ids must still resolve to the bare rate-card key.
-	for _, m := range []string{"claude-opus-4-8", "CLAUDE-OPUS-4-8", "anthropic/claude-opus-4-8", "us.anthropic.claude-opus-4-8", "  claude-opus-4-8  "} {
+	// Prefixed / cased / suffixed ids must still resolve to the bare rate-card key.
+	for _, m := range []string{"claude-opus-4-8", "CLAUDE-OPUS-4-8", "anthropic/claude-opus-4-8", "us.anthropic.claude-opus-4-8", "  claude-opus-4-8  ", "claude-opus-4-8[1m]", "claude-opus-4-8-20251001"} {
 		if got := rc.CostUSD(m, u); !approx(got, 2) {
 			t.Fatalf("model %q: got %v, want 2", m, got)
 		}
@@ -95,6 +95,15 @@ func TestNormalize(t *testing.T) {
 		{"claude-code/claude-opus-4-8", "claude-opus-4-8"},
 		{"anthropic/claude-opus-4-8", "claude-opus-4-8"},
 		{"us.anthropic.claude-opus-4-8", "claude-opus-4-8"},
+		// Context-window tag and dated snapshot — both appear in real transcripts
+		// and must resolve to the bare rate-card key.
+		{"claude-opus-4-8[1m]", "claude-opus-4-8"},
+		{"CLAUDE-OPUS-4-8[1M]", "claude-opus-4-8"},
+		{"anthropic/claude-opus-4-8[1m]", "claude-opus-4-8"},
+		{"claude-haiku-4-5-20251001", "claude-haiku-4-5"},
+		{"claude-haiku-4-5-20251001[1m]", "claude-haiku-4-5"},
+		// A bare version tail ("-4-5", a single digit) is not a date snapshot.
+		{"claude-haiku-4-5", "claude-haiku-4-5"},
 		{"", ""},
 	}
 	for _, tc := range cases {
