@@ -58,8 +58,10 @@ history rewrites don't double-count or lose usage:
   untouched.
 - **rebase in progress** — `consume` is a no-op and never reads or clears the
   marker, so usage destined for the next real commit survives the replay.
-- **`git commit --amend`** — re-scans and reuses the existing trailer rather than
-  appending a duplicate block (the trailer block is idempotent on re-run).
+- **`git commit --amend`** — arrives as git's `commit` source, so the existing
+  message (already carrying its cost trailer) is reused as-is: no re-scan, no
+  duplicate block. The trailer block is also idempotent if `prepare-commit-msg`
+  happens to fire twice for one message.
 - **detached HEAD** — usage records carry a real branch name, so a detached
   checkout matches nothing; no trailer is attached.
 

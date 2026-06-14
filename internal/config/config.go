@@ -10,12 +10,18 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/BurntSushi/toml"
 )
 
 // FileName is the per-repo config file, read from the repo root.
 const FileName = ".claude-budget.toml"
+
+// maxCostPrecision bounds Format.CostPrecision so a stray config value (e.g. a
+// fat-fingered costPrecision = 100000) can't produce a multi-KB trailer line.
+// Eight decimals is already far finer than any real per-commit USD cost.
+const maxCostPrecision = 8
 
 // Config is the parsed .claude-budget.toml.
 type Config struct {
@@ -63,8 +69,29 @@ func Load(repoRoot string) (*Config, error) {
 	if err := toml.Unmarshal(b, cfg); err != nil {
 		return nil, err
 	}
+	sanitize(cfg)
+	return cfg, nil
+}
+
+// sanitize clamps and cleans parsed values so a typo in the committed config
+// can't yield a malformed commit message. CostPrecision is bounded to
+// [0, maxCostPrecision], and rename values are stripped of CR/LF — a newline in a
+// trailer name would otherwise split one trailer into several message lines.
+func sanitize(cfg *Config) {
+	if cfg.Format.CostPrecision < 0 {
+		cfg.Format.CostPrecision = 0
+	}
+	if cfg.Format.CostPrecision > maxCostPrecision {
+		cfg.Format.CostPrecision = maxCostPrecision
+	}
 	if cfg.Format.Rename == nil {
 		cfg.Format.Rename = map[string]string{}
+		return
 	}
-	return cfg, nil
+	stripper := strings.NewReplacer("\r", "", "\n", "")
+	for k, v := range cfg.Format.Rename {
+		if clean := stripper.Replace(v); clean != v {
+			cfg.Format.Rename[k] = clean
+		}
+	}
 }

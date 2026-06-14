@@ -134,3 +134,40 @@ func TestLoadMalformedFileErrors(t *testing.T) {
 		t.Error("expected an error for malformed TOML")
 	}
 }
+
+func TestLoadSanitizesRenameLineBreaks(t *testing.T) {
+	// A newline in a rename value would split one trailer into several
+	// commit-message lines; Load must strip any CR/LF.
+	root := writeConfig(t, "[format.rename]\ncost = \"AI\\nCost\"\n")
+	cfg, err := Load(root)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if got := cfg.Format.Rename["cost"]; got != "AICost" {
+		t.Errorf("rename cost = %q, want %q (CR/LF stripped)", got, "AICost")
+	}
+}
+
+func TestLoadClampsCostPrecision(t *testing.T) {
+	cases := []struct {
+		name string
+		body string
+		want int
+	}{
+		{"over-max", "[format]\ncostPrecision = 100000\n", maxCostPrecision},
+		{"negative", "[format]\ncostPrecision = -3\n", 0},
+		{"in-range", "[format]\ncostPrecision = 4\n", 4},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			root := writeConfig(t, tc.body)
+			cfg, err := Load(root)
+			if err != nil {
+				t.Fatalf("Load: %v", err)
+			}
+			if cfg.Format.CostPrecision != tc.want {
+				t.Errorf("CostPrecision = %d, want %d", cfg.Format.CostPrecision, tc.want)
+			}
+		})
+	}
+}

@@ -474,4 +474,43 @@ func TestE2E_TrailerRerunIsIdempotent(t *testing.T) {
 	if !strings.Contains(string(got), "Claude-Cost: 0.10") {
 		t.Fatalf("expected the cost trailer to be present:\n%s", got)
 	}
+	// The idempotent (no-change) re-run must still stage the watermark, so a
+	// later post-commit promotes it rather than dropping the usage.
+	pend, ok, err := state.ReadPending(r.gitDir)
+	if err != nil || !ok {
+		t.Fatalf("idempotent re-run should still stage the pending marker (ok=%v err=%v)", ok, err)
+	}
+	if want := mustMs(t, e2eTs1); pend.HwmMs != want {
+		t.Errorf("staged watermark = %d, want %d", pend.HwmMs, want)
+	}
+}
+
+// The clear path (merge / cherry-pick / -c/-C message reuse — git source "merge"
+// or "commit") attaches no trailer and drops any staged pending marker, so usage
+// isn't mis-attributed to a message-reuse commit. Driven through the real binary
+// with a pre-seeded marker so ClearPending is genuinely exercised (the amend case
+// has no marker staged, so it can't prove the clear actually clears something).
+func TestE2E_ClearSourceDropsPendingMarker(t *testing.T) {
+	r := newE2ERepo(t)
+	if err := state.WritePending(r.gitDir, state.Pending{Branch: "main", HwmMs: 4242, LastRequestID: "r-stale"}); err != nil {
+		t.Fatalf("WritePending: %v", err)
+	}
+	r.seed("main", usageRec{e2eTs1, "r1", "claude-opus-4-8", 0, 4000})
+	msgFile := filepath.Join(r.gitDir, "MSG_CLEAR")
+	if err := os.WriteFile(msgFile, []byte("merge branch foo\n"), 0o644); err != nil {
+		t.Fatalf("write msg: %v", err)
+	}
+
+	r.run(r.root, binPath, "trailer", msgFile, "--source", "merge")
+
+	if r.pendingExists() {
+		t.Error("clear path must drop the staged pending marker")
+	}
+	got, err := os.ReadFile(msgFile)
+	if err != nil {
+		t.Fatalf("read msg: %v", err)
+	}
+	if strings.Contains(string(got), "Claude-Cost:") {
+		t.Errorf("clear path must not append a trailer:\n%s", got)
+	}
 }

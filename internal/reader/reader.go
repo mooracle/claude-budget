@@ -62,7 +62,7 @@ type Result struct {
 	TotalTokens  int64
 	Requests     int
 	MaxTsMs      int64  // watermark to stage on commit
-	MaxRequestID string // tie-breaker companion to MaxTsMs
+	MaxRequestID string // request id at the watermark, persisted alongside MaxTsMs
 }
 
 type dedupEntry struct {
