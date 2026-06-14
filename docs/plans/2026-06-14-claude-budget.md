@@ -196,11 +196,11 @@ usage destined for the next real commit.
 
 ### Task 9: Verify acceptance criteria
 
-- [ ] `setup` → edit a file with Claude Code → `git commit` → message has the configured trailers; `status` then shows reduced/zero pending
-- [ ] cancelled commit leaves pending intact (manual)
-- [ ] rebase/squash behave per Tasks 4–5
-- [ ] `go vet ./... && go build ./... && go test ./...` all green
-- [ ] config toggles change attached trailers as expected
+- [x] `setup` → edit a file with Claude Code → `git commit` → message has the configured trailers; `status` then shows reduced/zero pending — commit/trailer/watermark mechanics verified by `TestE2E_CommitAppendsTrailerAndAdvancesWatermark` (real `git commit`, trailer appended, `<gitDir>/claude-budget` advanced, `.pending` cleared); the interactive Claude Code edit step is manual (not automatable)
+- [x] cancelled commit leaves pending intact (manual) — verified by `TestE2E_CancelledCommitPreservesPending`
+- [x] rebase/squash behave per Tasks 4–5 — verified by `TestE2E_RebaseInProgressSkipsConsume`, `TestE2E_SquashSumsCostTrailers`, `TestConsume_RebaseRetainsMarkerUntouched`
+- [x] `go vet ./... && go build ./... && go test ./...` all green — ran: vet OK, build OK, all packages pass
+- [x] config toggles change attached trailers as expected — verified by `TestFormat_EachTrailerIndependently`, `TestFormat_AllTrailersOn`, `TestFormat_DefaultCostOnly`
 
 ### Task 10: Docs + close out
 
