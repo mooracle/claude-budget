@@ -14,6 +14,12 @@ import (
 // snapshotSuffix matches a trailing dated snapshot like "-20251001".
 var snapshotSuffix = regexp.MustCompile(`-\d{8}$`)
 
+// ctrlStripper removes CR/LF from a model id. The normalized name is rendered
+// verbatim into -Models trailer values, so a transcript-supplied newline would
+// otherwise split one trailer across several commit-message lines (the same
+// corruption guarded against for rename values in config.sanitize).
+var ctrlStripper = strings.NewReplacer("\r", "", "\n", "")
+
 // Rate is the per-1M-token price for one model, in the rate card's currency (USD).
 type Rate struct {
 	Input        float64 `json:"input"`
@@ -59,7 +65,7 @@ func Load(data []byte) (*RateCard, error) {
 // This is alias normalization, not a family fallback — an otherwise-unknown id
 // still stays unknown (and prices to 0) rather than borrowing a sibling's rate.
 func Normalize(model string) string {
-	m := strings.ToLower(strings.TrimSpace(model))
+	m := strings.ToLower(strings.TrimSpace(ctrlStripper.Replace(model)))
 	for _, p := range []string{"claude-code/", "anthropic/", "us.anthropic."} {
 		m = strings.TrimPrefix(m, p)
 	}

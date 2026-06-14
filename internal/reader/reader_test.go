@@ -125,6 +125,36 @@ func TestScan_BasicAggregateAndWatermark(t *testing.T) {
 	}
 }
 
+func TestScan_TiedCostOrderingIsStable(t *testing.T) {
+	projects := t.TempDir()
+	repo := t.TempDir()
+	// Two unknown models both price to 0 — a cost tie. The reader must break the
+	// tie deterministically (by model name) so the -Models trailer renders the
+	// same way every run; otherwise randomized map iteration reorders the line and
+	// the idempotency check appends a duplicate trailer block.
+	lines := []string{
+		recJSON(ts1, repo, "main", "r1", "r1-id", "zzz-model", 100, 50),
+		recJSON(ts2, repo, "main", "r2", "r2-id", "aaa-model", 100, 50),
+	}
+	writeJSONL(t, projects, "proj", "a.jsonl", lines, time.Time{})
+
+	// Run repeatedly: map iteration order is randomized, so a missing tiebreaker
+	// would surface a different ordering on some iteration.
+	for i := 0; i < 50; i++ {
+		res, err := Scan(projects, repo, "main", 0, testCard())
+		if err != nil {
+			t.Fatalf("Scan: %v", err)
+		}
+		if len(res.Models) != 2 {
+			t.Fatalf("models = %d, want 2", len(res.Models))
+		}
+		if res.Models[0].Model != "aaa-model" || res.Models[1].Model != "zzz-model" {
+			t.Fatalf("iter %d: order = [%q, %q], want [aaa-model, zzz-model]",
+				i, res.Models[0].Model, res.Models[1].Model)
+		}
+	}
+}
+
 func TestScan_DedupByRequestID(t *testing.T) {
 	projects := t.TempDir()
 	repo := t.TempDir()

@@ -150,7 +150,17 @@ func Scan(projectsDir, repoRoot, branch string, hwmMs int64, rc *pricing.RateCar
 		res.TotalTokens += ms.Tokens
 		res.Requests += ms.Requests
 	}
-	sort.Slice(res.Models, func(i, j int) bool { return res.Models[i].CostUSD > res.Models[j].CostUSD })
+	// Sort by cost descending, with model name as a deterministic tiebreaker so
+	// the -Models line renders identically every run. Without the tiebreaker,
+	// equal-cost models (e.g. several unknown models priced to 0) would inherit
+	// the randomized map-iteration order, and a reordered line would defeat the
+	// idempotency check and append a duplicate trailer block.
+	sort.Slice(res.Models, func(i, j int) bool {
+		if res.Models[i].CostUSD != res.Models[j].CostUSD {
+			return res.Models[i].CostUSD > res.Models[j].CostUSD
+		}
+		return res.Models[i].Model < res.Models[j].Model
+	})
 	return res, nil
 }
 

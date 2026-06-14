@@ -104,6 +104,10 @@ func TestNormalize(t *testing.T) {
 		{"claude-haiku-4-5-20251001[1m]", "claude-haiku-4-5"},
 		// A bare version tail ("-4-5", a single digit) is not a date snapshot.
 		{"claude-haiku-4-5", "claude-haiku-4-5"},
+		// Embedded CR/LF are stripped so a model id can't split a -Models trailer
+		// across commit-message lines.
+		{"claude-opus-4-8\ninjected-trailer: 999", "claude-opus-4-8injected-trailer: 999"},
+		{"claude-\ropus-4-8", "claude-opus-4-8"},
 		{"", ""},
 	}
 	for _, tc := range cases {
