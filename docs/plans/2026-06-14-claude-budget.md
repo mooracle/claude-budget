@@ -158,12 +158,12 @@ usage destined for the next real commit.
 - Create: `internal/state/state_test.go`
 - Create: `internal/hook/hook_test.go`
 
-- [ ] pricing: table tests per model × 5 buckets; unknown→0; `Normalize` prefix stripping
-- [ ] reader: synthesize a temp projects tree (real-shaped JSONL); assert dedup by `requestId`, branch filter, hwm cutoff, cwd membership incl. subdir, mtime prune, `MaxTsMs` watermark
-- [ ] state: round-trip `Save`/`Load`; per-branch isolation; pending write/read/clear; atomic-write leaves no `.tmp`
-- [ ] hook: install writes both 0755 + marker; uninstall removes only marked; third-party collision aborts without partial write; idempotent reinstall
-- [ ] (sequencing) the `state` + `reader` backfill may run **before** Task 3 to de-risk the write path, which leans on both; the rest can stay here
-- [ ] run `go test ./...` — must pass before next task
+- [x] pricing: table tests per model × 5 buckets; unknown→0; `Normalize` prefix stripping
+- [x] reader: synthesize a temp projects tree (real-shaped JSONL); assert dedup by `requestId`, branch filter, hwm cutoff, cwd membership incl. subdir, mtime prune, `MaxTsMs` watermark
+- [x] state: round-trip `Save`/`Load`; per-branch isolation; pending write/read/clear; atomic-write leaves no `.tmp`
+- [x] hook: install writes both 0755 + marker; uninstall removes only marked; third-party collision aborts without partial write; idempotent reinstall
+- [x] (sequencing) the `state` + `reader` backfill may run **before** Task 3 to de-risk the write path, which leans on both; the rest can stay here
+- [x] run `go test ./...` — must pass before next task
 
 ### Task 7: git e2e suite (hook write path)
 
