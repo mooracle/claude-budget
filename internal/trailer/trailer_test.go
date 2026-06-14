@@ -184,6 +184,119 @@ func TestFormat_NilConfigUsesDefaults(t *testing.T) {
 	}
 }
 
+func TestSumDuplicates_TwoCostLines(t *testing.T) {
+	in := []string{
+		"reworded subject",
+		"",
+		"Claude-Cost: 0.43",
+		"Claude-Cost: 0.50",
+	}
+	got := SumDuplicates(in, "Claude-Cost")
+	want := []string{
+		"reworded subject",
+		"",
+		"Claude-Cost: 0.93",
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("got %#v, want %#v", got, want)
+	}
+}
+
+func TestSumDuplicates_ThreeLinesKeepsMaxPrecision(t *testing.T) {
+	in := []string{
+		"Claude-Cost: 0.10",
+		"Claude-Cost: 0.2000",
+		"Claude-Cost: 0.30",
+	}
+	got := SumDuplicates(in, "Claude-Cost")
+	want := []string{"Claude-Cost: 0.6000"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("got %#v, want %#v", got, want)
+	}
+}
+
+// The summed line lands at the first duplicate's position; later duplicates are
+// dropped while any interleaved non-cost lines stay put.
+func TestSumDuplicates_PositionAndInterleaving(t *testing.T) {
+	in := []string{
+		"Claude-Cost: 0.40",
+		"Claude-Interactions: 7",
+		"Claude-Cost: 0.20",
+	}
+	got := SumDuplicates(in, "Claude-Cost")
+	want := []string{
+		"Claude-Cost: 0.60",
+		"Claude-Interactions: 7",
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("got %#v, want %#v", got, want)
+	}
+}
+
+// A renamed cost trailer must sum under its new name.
+func TestSumDuplicates_RenamedTrailer(t *testing.T) {
+	in := []string{
+		"AI-Cost: 0.10",
+		"AI-Cost: 0.15",
+	}
+	got := SumDuplicates(in, "AI-Cost")
+	want := []string{"AI-Cost: 0.25"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("got %#v, want %#v", got, want)
+	}
+}
+
+// The -Models aggregate shares the cost prefix but not the exact name, and any
+// non-numeric value under the cost name is left untouched.
+func TestSumDuplicates_NonNumericAndModelsUntouched(t *testing.T) {
+	in := []string{
+		"Claude-Cost: 0.40",
+		"Claude-Cost-Models: claude-opus-4=0.40",
+		"Claude-Cost: 0.20",
+		"Claude-Cost: n/a",
+	}
+	got := SumDuplicates(in, "Claude-Cost")
+	want := []string{
+		"Claude-Cost: 0.60",
+		"Claude-Cost-Models: claude-opus-4=0.40",
+		"Claude-Cost: n/a",
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("got %#v, want %#v", got, want)
+	}
+}
+
+// Fewer than two numeric matches is a no-op: zero, one, or one numeric + one
+// non-numeric all return the input unchanged.
+func TestSumDuplicates_NoCollapseBelowTwo(t *testing.T) {
+	cases := [][]string{
+		{"subject", "", "Claude-Tokens: 1500"},
+		{"Claude-Cost: 0.43"},
+		{"Claude-Cost: 0.43", "Claude-Cost: oops"},
+	}
+	for _, in := range cases {
+		got := SumDuplicates(in, "Claude-Cost")
+		if !reflect.DeepEqual(got, in) {
+			t.Fatalf("expected unchanged for %#v, got %#v", in, got)
+		}
+	}
+}
+
+// SumDuplicates is pure: it must not mutate its input slice and must be
+// deterministic across repeated calls.
+func TestSumDuplicates_PureNoMutation(t *testing.T) {
+	in := []string{"Claude-Cost: 0.40", "Claude-Cost: 0.20"}
+	orig := append([]string(nil), in...)
+	first := SumDuplicates(in, "Claude-Cost")
+	if !reflect.DeepEqual(in, orig) {
+		t.Fatalf("input mutated: got %#v, want %#v", in, orig)
+	}
+	second := SumDuplicates(in, "Claude-Cost")
+	if !reflect.DeepEqual(first, second) {
+		t.Fatalf("non-deterministic: %#v vs %#v", first, second)
+	}
+}
+
 func TestName(t *testing.T) {
 	cfg := config.Defaults()
 	if n := Name(cfg, KeyCost); n != "Claude-Cost" {

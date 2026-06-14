@@ -127,12 +127,12 @@ all source routing** tokentrack does in shell (`commitHook.ts` lines 63-92). Rou
 - Create: `internal/trailer/sum.go`
 - Modify: `internal/trailer/trailer_test.go`
 
-- [ ] keep `internal/trailer` pure: `SumDuplicates(lines []string, trailerName string) []string` (lines in, lines out); file read/write stays in `main.go`
-- [ ] sum duplicate **bare-number** total-cost trailer lines into one; the trailer name is **config-derived** (`config.Format.Rename["cost"]`, default `Claude-Cost`) — NOT hard-coded. (tokentrack hard-codes `Copilot-AI-Credits`, but our cost trailer is renameable, so a hard-coded match would silently break summing for any team using `[format.rename]`.)
-- [ ] leave non-numeric lines untouched (`-Models` aggregates, any renamed non-cost trailer)
-- [ ] summing path must **not** consult or modify state, and must `ClearPending` (usage carries forward to the next normal commit)
-- [ ] write tests: two `Claude-Cost` lines → one summed; **rename `cost`→`AI-Cost` then two `AI-Cost` lines → one summed**; non-numeric/`-Models` lines untouched; `SumDuplicates` is pure (no file I/O)
-- [ ] run `go test ./...` — must pass before next task
+- [x] keep `internal/trailer` pure: `SumDuplicates(lines []string, trailerName string) []string` (lines in, lines out); file read/write stays in `main.go`
+- [x] sum duplicate **bare-number** total-cost trailer lines into one; the trailer name is **config-derived** (`config.Format.Rename["cost"]`, default `Claude-Cost`) — NOT hard-coded. (tokentrack hard-codes `Copilot-AI-Credits`, but our cost trailer is renameable, so a hard-coded match would silently break summing for any team using `[format.rename]`.)
+- [x] leave non-numeric lines untouched (`-Models` aggregates, any renamed non-cost trailer)
+- [x] summing path must **not** consult or modify state, and must `ClearPending` (usage carries forward to the next normal commit)
+- [x] write tests: two `Claude-Cost` lines → one summed; **rename `cost`→`AI-Cost` then two `AI-Cost` lines → one summed**; non-numeric/`-Models` lines untouched; `SumDuplicates` is pure (no file I/O)
+- [x] run `go test ./...` — must pass before next task
 
 ### Task 5: `consume` command (post-commit brain)
 

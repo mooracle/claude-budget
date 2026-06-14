@@ -284,14 +284,30 @@ func trailerMain(args []string) error {
 	}
 }
 
-// runTrailerSum handles the rebase/squash path. The full duplicate-trailer
-// summing lands in Task 4; the invariant established here is the one Task 4 must
-// preserve — this path never reads or advances the watermark and always clears
-// the pending marker so usage carries forward to the next normal commit.
+// runTrailerSum handles the rebase/squash path: a combined message can carry one
+// cost trailer per folded commit, so we fold those into a single summed line.
+// This path never reads or advances the watermark and always clears the pending
+// marker, so the underlying usage carries forward to the next normal commit.
 func runTrailerSum(gitDir, msgFile string) error {
-	// TODO(Task 4): read msgFile, trailer.SumDuplicates on the cost trailer,
-	// write back. Until then the only guaranteed action is clearing the marker.
-	_ = msgFile
+	// Sum on whatever the cost trailer is actually named (config-derived, so a
+	// [format.rename] still sums). Config-load failures fall back to the default
+	// name rather than skipping the fold.
+	costName := trailer.Name(nil, trailer.KeyCost)
+	if root, err := gitutil.RepoRoot(); err == nil {
+		if cfg, err := config.Load(root); err == nil {
+			costName = trailer.Name(cfg, trailer.KeyCost)
+		} else {
+			fmt.Fprintln(os.Stderr, "claude-budget trailer: load config:", err)
+		}
+	}
+	if cur, err := os.ReadFile(msgFile); err != nil {
+		fmt.Fprintf(os.Stderr, "claude-budget trailer: read commit message %q: %v\n", msgFile, err)
+	} else if summed := strings.Join(trailer.SumDuplicates(strings.Split(string(cur), "\n"), costName), "\n"); summed != string(cur) {
+		if err := os.WriteFile(msgFile, []byte(summed), 0o644); err != nil {
+			fmt.Fprintln(os.Stderr, "claude-budget trailer: write summed message:", err)
+		}
+	}
+	// Always clear the marker, even if the read/write above failed.
 	return state.ClearPending(gitDir)
 }
 
