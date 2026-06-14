@@ -391,6 +391,41 @@ func TestE2E_SquashSumsCostTrailers(t *testing.T) {
 	}
 }
 
+// The same squash fold, but with a [format.rename] cost = "AI-Cost" config: the
+// trailers are written and summed under the renamed name, proving runTrailerSum
+// derives the cost-trailer name from config rather than hard-coding "Claude-Cost".
+func TestE2E_SquashSumsRenamedCostTrailers(t *testing.T) {
+	r := newE2ERepo(t)
+	r.writeFile(".claude-budget.toml", "[format.rename]\ncost = \"AI-Cost\"\n")
+	r.seed("main", usageRec{e2eTs1, "r1", "claude-opus-4-8", 0, 4000}) // 0.10
+	r.commit("c1", "f.txt", "1\n")
+	r.seed("main", usageRec{e2eTs2, "r2", "claude-opus-4-8", 0, 8000}) // 0.20
+	r.commit("c2", "f.txt", "1\n2\n")
+	r.seed("main", usageRec{e2eTs3, "r3", "claude-opus-4-8", 0, 12000}) // 0.30
+	r.commit("c3", "f.txt", "1\n2\n3\n")
+
+	// Each commit must have rendered the renamed trailer, not the default.
+	if msg := r.headMessage(); !strings.Contains(msg, "AI-Cost: 0.30") {
+		t.Fatalf("pre-squash commit missing renamed trailer:\n%s", msg)
+	}
+
+	seq := r.writeScript("seq-editor.sh", seqEditorScript)
+	cmd := exec.Command("git", "rebase", "-i", "HEAD~2")
+	cmd.Dir = r.root
+	cmd.Env = withEnv(r.env, "GIT_SEQUENCE_EDITOR", seq)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("rebase -i squash: %v\n%s", err, out)
+	}
+
+	msg := r.headMessage()
+	if n := strings.Count(msg, "AI-Cost:"); n != 1 {
+		t.Fatalf("expected exactly one summed renamed cost trailer, got %d:\n%s", n, msg)
+	}
+	if !strings.Contains(msg, "AI-Cost: 0.50") {
+		t.Fatalf("summed renamed cost trailer wrong/missing (want 0.50):\n%s", msg)
+	}
+}
+
 // `git commit --amend` reuses the existing message (source "commit" -> clear path);
 // the existing cost trailer is preserved, not duplicated, and the watermark holds.
 func TestE2E_AmendDoesNotDuplicateTrailer(t *testing.T) {

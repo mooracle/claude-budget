@@ -93,10 +93,40 @@ claude-budget price        # smoke-test the embedded rate card
 installed hooks, not run by hand. After `setup`, just `git commit` as usual —
 the trailers attach automatically.
 
+The `Makefile` wraps the common developer tasks:
+
+```sh
+make build        # build the local binary
+make check        # vet + build + test gate (run before committing)
+make build-all    # cross-compile every release target into dist/
+make update-rates # re-derive cache-tier prices (requires jq)
+make clean        # remove build output
+```
+
 ## Configuration
 
 A committed `.claude-budget.toml` at the repo root selects which trailers to
-attach — team-wide and reviewable. See the example in this repo.
+attach and how they're rendered — team-wide and reviewable. Every key is
+optional; an absent file (or a missing key) keeps the defaults below.
+
+```toml
+[trailers]
+cost         = true    # Claude-Cost: total USD            (default: on)
+costModels   = false   # Claude-Cost-Models: per-model USD
+tokens       = false   # Claude-Tokens: total tokens
+tokensModels = false   # Claude-Tokens-Models: per-model tokens
+interactions = false   # Claude-Interactions: deduped request count
+
+[format]
+costPrecision = 2      # decimal places on cost trailers (default: 2)
+
+# Rename any trailer (key → custom name). Summing on squash/rebase follows the
+# renamed name, so this keeps working across history rewrites.
+[format.rename]
+cost = "AI-Cost"       # renders "AI-Cost: 0.42" instead of "Claude-Cost: 0.42"
+```
+
+See `.claude-budget.toml` in this repo for the annotated example.
 
 ## Pricing
 
@@ -112,7 +142,8 @@ re-derived:
 1. Open `platform.claude.com/docs/en/pricing.md`.
 2. Update each model's base `input` / `output` in `data/claude-pricing.json` and
    bump the top-level `version` to today's date.
-3. `make update-rates` — recomputes `cacheRead` / `cacheWrite5m` / `cacheWrite1h`
-   from `input` via the 0.1× / 1.25× / 2× multipliers, preserving everything else.
+3. `make update-rates` (requires [`jq`](https://jqlang.github.io/jq/)) —
+   recomputes `cacheRead` / `cacheWrite5m` / `cacheWrite1h` from `input` via the
+   0.1× / 1.25× / 2× multipliers, preserving everything else.
 4. `go test ./...` and commit the diff (the analog of Copilot Budget's
    `npm run update-rates`).

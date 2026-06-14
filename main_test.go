@@ -240,6 +240,14 @@ func TestSplitTrailingComments(t *testing.T) {
 			wantBody:     "subject\n# scissors\ndiff --git a b\n",
 			wantComments: "",
 		},
+		{
+			// A '#' line directly following body text is the user's content (git
+			// puts a blank line before its template), so it must not be split off.
+			name:         "hashtag body line is not a comment",
+			content:      "Fix bug\n\nSee discussion\n#offtopic note\n",
+			wantBody:     "Fix bug\n\nSee discussion\n#offtopic note\n",
+			wantComments: "",
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

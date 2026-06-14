@@ -205,7 +205,8 @@ func toUsage(u *usage) pricing.Usage {
 		pu.CacheWrite1h = u.CacheTiers.E1h
 	} else {
 		// Older records carry only the total; attribute to 1h (observed Claude
-		// Code default). Documented assumption — see docs/plans.
+		// Code default). Documented assumption — see
+		// docs/plans/completed/2026-06-14-claude-budget.md.
 		pu.CacheWrite1h = u.CacheCreate
 	}
 	return pu

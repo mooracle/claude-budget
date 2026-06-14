@@ -307,6 +307,57 @@ func TestScan_MissingProjectsDir(t *testing.T) {
 	}
 }
 
+// toUsage carries the bulk of a real transcript's cost (cache tokens dominate),
+// so its bucket attribution is verified directly across the tiered, legacy, and
+// zero-tier-fallback shapes.
+func TestToUsage_CacheBucketAttribution(t *testing.T) {
+	cases := []struct {
+		name string
+		in   *usage
+		want pricing.Usage
+	}{
+		{
+			name: "split 5m/1h tiers map to their own buckets",
+			in: &usage{
+				Input:     10,
+				Output:    20,
+				CacheRead: 30,
+				// CacheCreate is ignored once the tier breakdown is present.
+				CacheCreate: 999,
+				CacheTiers: &struct {
+					E5m int64 `json:"ephemeral_5m_input_tokens"`
+					E1h int64 `json:"ephemeral_1h_input_tokens"`
+				}{E5m: 40, E1h: 50},
+			},
+			want: pricing.Usage{Input: 10, Output: 20, CacheRead: 30, CacheWrite5m: 40, CacheWrite1h: 50},
+		},
+		{
+			name: "legacy total (no tier breakdown) attributes all to 1h",
+			in:   &usage{Input: 1, Output: 2, CacheRead: 3, CacheCreate: 70},
+			want: pricing.Usage{Input: 1, Output: 2, CacheRead: 3, CacheWrite1h: 70},
+		},
+		{
+			name: "zero-sum tier breakdown falls back to the legacy total",
+			in: &usage{
+				Input:       5,
+				CacheCreate: 80,
+				CacheTiers: &struct {
+					E5m int64 `json:"ephemeral_5m_input_tokens"`
+					E1h int64 `json:"ephemeral_1h_input_tokens"`
+				}{E5m: 0, E1h: 0},
+			},
+			want: pricing.Usage{Input: 5, CacheWrite1h: 80},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := toUsage(tc.in); got != tc.want {
+				t.Fatalf("toUsage = %+v, want %+v", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestScan_EmptyResultWhenNoMatches(t *testing.T) {
 	projects := t.TempDir()
 	repo := t.TempDir()

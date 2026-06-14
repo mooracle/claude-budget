@@ -6,7 +6,7 @@
 //	prepare-commit-msg → claude-budget trailer "$1"   (scan, price, append, stage watermark)
 //	post-commit        → claude-budget consume         (promote the staged watermark)
 //
-// See docs/plans/2026-06-14-claude-budget.md for the full design.
+// See docs/plans/completed/2026-06-14-claude-budget.md for the full design.
 package main
 
 import (
@@ -202,7 +202,7 @@ func enabledTrailers(cfg *config.Config) string {
 
 // trailerRoute is how a `trailer` invocation is dispatched, decided from the
 // commit source ($2) and rebase state. The thin shim pushes all routing into the
-// binary; see the routing table in docs/plans/2026-06-14-claude-budget.md.
+// binary; see the routing table in docs/plans/completed/2026-06-14-claude-budget.md.
 type trailerRoute int
 
 const (
@@ -436,6 +436,12 @@ func splitTrailingComments(content string) (body, comments string) {
 	start := -1
 	for i := range lines {
 		if !strings.HasPrefix(lines[i], "#") {
+			continue
+		}
+		// git always emits a blank line before its template comment block, so a
+		// '#' line that directly follows body text is the user's content (e.g. a
+		// trailing "#hashtag" note), not a comment — don't swallow it.
+		if i > 0 && lines[i-1] != "" {
 			continue
 		}
 		allCommentOrBlank := true
