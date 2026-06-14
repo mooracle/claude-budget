@@ -81,12 +81,12 @@ config parsing, the test suite, and distribution. The read path is done.
 - Create: `internal/trailer/trailer.go`
 - Create: `internal/trailer/trailer_test.go`
 
-- [ ] `Format(res *reader.Result, cfg *config.Config) []string` returning trailer lines `"Name: value"` (bare numbers, no `$`/suffix)
-- [ ] `Claude-Cost` (cost at `CostPrecision`); `Claude-Cost-Models` (`model=val,…`); `Claude-Tokens`; `Claude-Tokens-Models`; `Claude-Interactions` — each gated by config
-- [ ] apply `Format.Rename` to trailer keys (e.g. `cost → AI-Cost`)
-- [ ] return empty slice when `res.Requests == 0` (nothing to attach)
-- [ ] write tests: each trailer type on/off, precision rounding, rename, multi-model ordering (stable), empty result
-- [ ] run `go test ./...` — must pass before next task
+- [x] `Format(res *reader.Result, cfg *config.Config) []string` returning trailer lines `"Name: value"` (bare numbers, no `$`/suffix)
+- [x] `Claude-Cost` (cost at `CostPrecision`); `Claude-Cost-Models` (`model=val,…`); `Claude-Tokens`; `Claude-Tokens-Models`; `Claude-Interactions` — each gated by config
+- [x] apply `Format.Rename` to trailer keys (e.g. `cost → AI-Cost`)
+- [x] return empty slice when `res.Requests == 0` (nothing to attach)
+- [x] write tests: each trailer type on/off, precision rounding, rename, multi-model ordering (stable), empty result
+- [x] run `go test ./...` — must pass before next task
 
 ### Task 3: `trailer` command — source routing + normal path (prepare-commit-msg brain)
 
