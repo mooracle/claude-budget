@@ -514,3 +514,43 @@ func TestE2E_ClearSourceDropsPendingMarker(t *testing.T) {
 		t.Errorf("clear path must not append a trailer:\n%s", got)
 	}
 }
+
+// Verbose commits ('commit -v' / commit.verbose=true) hand prepare-commit-msg a
+// message that ends with a scissors cut line and the raw diff. The trailer must
+// land above that cut line; appended at the very end it sits below the cut line,
+// which git discards — silently dropping the trailer. Driven through the real
+// binary with a faithfully-shaped verbose template.
+func TestE2E_VerboseScissorsTrailerSurvives(t *testing.T) {
+	r := newE2ERepo(t)
+	r.seed("main", usageRec{e2eTs1, "r1", "claude-opus-4-8", 0, 4000}) // 0.10
+	msgFile := filepath.Join(r.gitDir, "MSG_VERBOSE")
+	verbose := "subject\n\n" +
+		"# Please enter the commit message for your changes. Lines starting\n" +
+		"# with '#' will be ignored, and an empty message aborts the commit.\n" +
+		"#\n" +
+		"# On branch main\n" +
+		"# ------------------------ >8 ------------------------\n" +
+		"# Do not modify or remove the line above.\n" +
+		"# Everything below it will be ignored.\n" +
+		"diff --git a/f.txt b/f.txt\n" +
+		"index 0000000..1111111 100644\n" +
+		"--- a/f.txt\n+++ b/f.txt\n@@ -1 +1 @@\n-hello\n+change\n"
+	if err := os.WriteFile(msgFile, []byte(verbose), 0o644); err != nil {
+		t.Fatalf("write msg: %v", err)
+	}
+
+	r.run(r.root, binPath, "trailer", msgFile, "--source", "")
+
+	got, err := os.ReadFile(msgFile)
+	if err != nil {
+		t.Fatalf("read msg: %v", err)
+	}
+	scissors := strings.Index(string(got), ">8")
+	trailer := strings.Index(string(got), "Claude-Cost: 0.10")
+	if trailer < 0 {
+		t.Fatalf("cost trailer missing from verbose message:\n%s", got)
+	}
+	if scissors >= 0 && trailer > scissors {
+		t.Fatalf("trailer is below the scissors cut line (git would discard it):\n%s", got)
+	}
+}

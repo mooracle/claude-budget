@@ -427,10 +427,15 @@ func appendTrailerBlock(content string, lines []string) (string, bool) {
 }
 
 // splitTrailingComments separates the editable body from the trailing block of
-// git-generated comment lines. The comment block is the maximal suffix of the
-// content beginning at a '#' line where every following line is blank or another
-// '#' comment — matching git's default editor template (verbose/scissors mode,
-// whose diff lines aren't comments, is not handled and falls through to append).
+// git-generated comment lines. The comment block is the suffix of the content
+// beginning at a '#' line (preceded by a blank line, per git's template) where
+// every following line is blank or another '#' comment — matching git's default
+// editor template. Verbose commits ('commit -v' / commit.verbose=true) also
+// append a scissors cut line followed by the raw diff; that whole block is
+// non-body too, so the comment suffix starts at it and the trailer is inserted
+// above it. Without this, the trailer would be appended at the very end, below
+// the cut line, and git discards everything from the cut line down — silently
+// dropping the trailer.
 func splitTrailingComments(content string) (body, comments string) {
 	lines := strings.Split(content, "\n")
 	start := -1
@@ -446,6 +451,13 @@ func splitTrailingComments(content string) (body, comments string) {
 		}
 		allCommentOrBlank := true
 		for j := i; j < len(lines); j++ {
+			// The scissors cut line begins git's verbose diff block: the comment
+			// block, the cut line, and the raw diff below it are all non-body, so
+			// treat the suffix as a comment block even though the diff lines that
+			// follow aren't '#' comments.
+			if isScissorsLine(lines[j]) {
+				break
+			}
 			if lines[j] != "" && !strings.HasPrefix(lines[j], "#") {
 				allCommentOrBlank = false
 				break
@@ -460,6 +472,14 @@ func splitTrailingComments(content string) (body, comments string) {
 		return content, ""
 	}
 	return strings.Join(lines[:start], "\n"), strings.Join(lines[start:], "\n")
+}
+
+// isScissorsLine reports whether line is git's verbose/scissors cut line, e.g.
+// "# ------------------------ >8 ------------------------". git emits it before
+// the diff under commit verbose mode and discards everything from it downward,
+// so any trailer must be placed above it rather than appended at the end.
+func isScissorsLine(line string) bool {
+	return strings.HasPrefix(line, "#") && strings.Contains(line, ">8")
 }
 
 // --- consume command (post-commit brain) -------------------------------------

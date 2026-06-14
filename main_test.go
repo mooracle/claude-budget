@@ -206,6 +206,21 @@ func TestAppendTrailerBlock(t *testing.T) {
 			wantChanged: false,
 			want:        "subject\n\nClaude-Cost: 0.42\n\n# Please enter the commit message\n",
 		},
+		{
+			// Verbose mode ('commit -v'): the trailer must go above the scissors
+			// cut line, otherwise git discards it with the diff below.
+			name: "insert above verbose scissors block",
+			content: "subject\n\n" +
+				"# Please enter the commit message for your changes.\n" +
+				"# ------------------------ >8 ------------------------\n" +
+				"diff --git a/f b/f\n+change\n",
+			lines:       []string{"Claude-Cost: 0.42"},
+			wantChanged: true,
+			want: "subject\n\nClaude-Cost: 0.42\n\n" +
+				"# Please enter the commit message for your changes.\n" +
+				"# ------------------------ >8 ------------------------\n" +
+				"diff --git a/f b/f\n+change\n",
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -235,10 +250,31 @@ func TestSplitTrailingComments(t *testing.T) {
 			wantComments: "# c1\n# c2\n",
 		},
 		{
-			name:         "verbose diff is not treated as comments",
+			// A '#' line jammed directly against body text (no blank line before
+			// it, unlike git's template) is user content, so nothing is split off
+			// even when a diff-like line follows.
+			name:         "hashtag line against body with diff stays body",
 			content:      "subject\n# scissors\ndiff --git a b\n",
 			wantBody:     "subject\n# scissors\ndiff --git a b\n",
 			wantComments: "",
+		},
+		{
+			// git's real verbose/scissors template: comment block, the cut line,
+			// then the raw diff. All of it is non-body and must split off so the
+			// trailer lands above the cut line (git discards everything below it).
+			name: "verbose scissors block is all comments",
+			content: "subject\n\n" +
+				"# Please enter the commit message for your changes.\n" +
+				"# On branch main\n" +
+				"# ------------------------ >8 ------------------------\n" +
+				"# Do not modify or remove the line above.\n" +
+				"diff --git a/f b/f\n+change\n",
+			wantBody: "subject\n",
+			wantComments: "# Please enter the commit message for your changes.\n" +
+				"# On branch main\n" +
+				"# ------------------------ >8 ------------------------\n" +
+				"# Do not modify or remove the line above.\n" +
+				"diff --git a/f b/f\n+change\n",
 		},
 		{
 			// A '#' line directly following body text is the user's content (git
