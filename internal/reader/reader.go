@@ -75,6 +75,13 @@ type dedupEntry struct {
 
 var usageMarker = []byte(`"usage"`)
 
+// maxLineBytes caps a single transcript line for the bufio scanners. Transcript
+// lines can be large (pasted files, embedded images), so both scan loops —
+// scanFile (usage) and firstCwd (repo membership) — must use the same cap;
+// otherwise a project whose first line falls between the two limits has its cwd
+// detection fail and the whole directory's usage is silently dropped.
+const maxLineBytes = 64 * 1024 * 1024
+
 // Scan walks projectsDir and returns the current branch's usage since hwmMs.
 func Scan(projectsDir, repoRoot, branch string, hwmMs int64, rc *pricing.RateCard) (*Result, error) {
 	res := &Result{Branch: branch}
@@ -154,7 +161,7 @@ func scanFile(path, branch string, hwmMs int64, best map[string]dedupEntry) {
 	}
 	defer f.Close()
 	sc := bufio.NewScanner(f)
-	sc.Buffer(make([]byte, 0, 64*1024), 64*1024*1024) // transcript lines can be large
+	sc.Buffer(make([]byte, 0, 64*1024), maxLineBytes)
 	line := 0
 	for sc.Scan() {
 		line++
@@ -228,7 +235,7 @@ func firstCwd(files []string) string {
 			continue
 		}
 		sc := bufio.NewScanner(f)
-		sc.Buffer(make([]byte, 0, 64*1024), 16*1024*1024)
+		sc.Buffer(make([]byte, 0, 64*1024), maxLineBytes)
 		for sc.Scan() {
 			var r struct {
 				Cwd string `json:"cwd"`
