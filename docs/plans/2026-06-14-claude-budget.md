@@ -67,13 +67,13 @@ config parsing, the test suite, and distribution. The read path is done.
 - Modify: `go.mod` (add `github.com/BurntSushi/toml`)
 - Modify: `main.go` (load config in `status`; add the "would attach" line)
 
-- [ ] define `Config` struct: `Trailers{Cost,CostModels,Tokens,TokensModels,Interactions bool}`, `Format{CostPrecision int, Rename map[string]string}`
-- [ ] `Load(repoRoot string) (*Config, error)` — read `<repoRoot>/.claude-budget.toml`; return defaults (Cost=true, CostPrecision=2, all else off) when the file is absent
-- [ ] `Defaults()` helper; missing keys fall back to defaults (don't zero-out)
-- [ ] add `BurntSushi/toml` require; `go mod tidy`
-- [ ] wire into `status`: print enabled trailer config keys (the rendered "would attach: <names>" line reuses Task 2's formatter — add it after Task 2 to avoid duplicating name logic)
-- [ ] write tests: full file parse, absent file → defaults, partial file → defaults for missing keys, rename + precision
-- [ ] run `go test ./...` — must pass before next task
+- [x] define `Config` struct: `Trailers{Cost,CostModels,Tokens,TokensModels,Interactions bool}`, `Format{CostPrecision int, Rename map[string]string}`
+- [x] `Load(repoRoot string) (*Config, error)` — read `<repoRoot>/.claude-budget.toml`; return defaults (Cost=true, CostPrecision=2, all else off) when the file is absent
+- [x] `Defaults()` helper; missing keys fall back to defaults (don't zero-out)
+- [x] add `BurntSushi/toml` require; `go mod tidy`
+- [x] wire into `status`: print enabled trailer config keys (the rendered "would attach: <names>" line reuses Task 2's formatter — add it after Task 2 to avoid duplicating name logic)
+- [x] write tests: full file parse, absent file → defaults, partial file → defaults for missing keys, rename + precision
+- [x] run `go test ./...` — must pass before next task
 
 ### Task 2: Trailer formatter (pure)
 

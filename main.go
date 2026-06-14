@@ -14,7 +14,9 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
+	"github.com/mooracle/claude-budget/internal/config"
 	"github.com/mooracle/claude-budget/internal/gitutil"
 	"github.com/mooracle/claude-budget/internal/hook"
 	"github.com/mooracle/claude-budget/internal/pricing"
@@ -118,6 +120,10 @@ func runStatus() error {
 	if err != nil {
 		return err
 	}
+	cfg, err := config.Load(root)
+	if err != nil {
+		return err
+	}
 	st, err := state.Load(gitDir)
 	if err != nil {
 		return err
@@ -153,6 +159,8 @@ func runStatus() error {
 		fmt.Println()
 	}
 
+	fmt.Printf("  config: trailers %s   ·   cost precision %d\n", enabledTrailers(cfg), cfg.Format.CostPrecision)
+
 	hooksDir, _ := gitutil.HooksDir()
 	if hook.IsInstalled(hooksDir) {
 		fmt.Println("  hooks: installed (trailers attach on commit)")
@@ -160,6 +168,32 @@ func runStatus() error {
 		fmt.Println("  hooks: not installed — run `claude-budget setup`")
 	}
 	return nil
+}
+
+// enabledTrailers lists the config keys for trailers turned on, in declaration
+// order. The rendered trailer names (with [format.rename] applied) come from the
+// Task 2 formatter — this surfaces the raw config toggles.
+func enabledTrailers(cfg *config.Config) string {
+	t := cfg.Trailers
+	var on []string
+	for _, kv := range []struct {
+		name string
+		on   bool
+	}{
+		{"cost", t.Cost},
+		{"costModels", t.CostModels},
+		{"tokens", t.Tokens},
+		{"tokensModels", t.TokensModels},
+		{"interactions", t.Interactions},
+	} {
+		if kv.on {
+			on = append(on, kv.name)
+		}
+	}
+	if len(on) == 0 {
+		return "(none)"
+	}
+	return strings.Join(on, ", ")
 }
 
 func runPriceDemo() error {
