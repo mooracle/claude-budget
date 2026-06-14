@@ -41,10 +41,24 @@ git commit
 A cancelled commit never reaches `post-commit`, so its usage carries forward —
 the same deferred-truncation guarantee as Copilot Budget (issue #10).
 
+## Install
+
+```sh
+# Go toolchain (any platform):
+go install github.com/mooracle/claude-budget@latest
+
+# Homebrew (macOS / Linux):
+brew install mooracle/tap/claude-budget
+```
+
+Or grab a prebuilt binary for your OS/arch from the
+[GitHub releases](https://github.com/mooracle/claude-budget/releases) page
+(`darwin`/`linux`/`windows` × `amd64`/`arm64`).
+
 ## Build & use
 
 ```sh
-go build -o claude-budget .
+go build -o claude-budget .   # or: make build
 
 # in any git repo where you use Claude Code:
 claude-budget setup        # install the prepare-commit-msg + post-commit hooks
@@ -62,8 +76,17 @@ attach — team-wide and reviewable. See the example in this repo.
 
 `data/claude-pricing.json` is the checked-in rate card (Anthropic list prices;
 cache tiers via the standard 0.1× / 1.25× / 2× multipliers), embedded into the
-binary and parsed at runtime. Refresh it from
-`platform.claude.com/docs/en/pricing.md` and commit the diff — the analog of
-Copilot Budget's `npm run update-rates`.
+binary and parsed at runtime. Unknown models price to `0` rather than being
+mispriced.
 
-Unknown models price to `0` rather than being mispriced.
+**Refreshing the rate card.** There's no machine-readable upstream to mirror
+byte-for-byte, so the base prices are edited by hand and the cache tiers are
+re-derived:
+
+1. Open `platform.claude.com/docs/en/pricing.md`.
+2. Update each model's base `input` / `output` in `data/claude-pricing.json` and
+   bump the top-level `version` to today's date.
+3. `make update-rates` — recomputes `cacheRead` / `cacheWrite5m` / `cacheWrite1h`
+   from `input` via the 0.1× / 1.25× / 2× multipliers, preserving everything else.
+4. `go test ./...` and commit the diff (the analog of Copilot Budget's
+   `npm run update-rates`).

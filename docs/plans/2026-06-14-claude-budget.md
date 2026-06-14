@@ -186,13 +186,13 @@ usage destined for the next real commit.
 - Create: `.github/workflows/release.yml`
 - Modify: `README.md`
 
-- [ ] `Makefile`: `build`, `test` (`go test ./...`), `vet`, `update-rates`
-- [ ] document a manual rate-refresh procedure (edit base input/output in `data/claude-pricing.json`, bump `version`, `go test`) — there's no upstream machine-readable source to mirror byte-for-byte like tokentrack's YAML
-- [ ] (optional; defer to Post-Completion if fragile) `update-rates` script: extract ONLY base input/output from `platform.claude.com/docs/en/pricing.md`, **re-derive** cache tiers via the documented multipliers (0.1× / 1.25× / 2×), and **preserve** `note`/`source`/`version`
-- [ ] release workflow: build `darwin/linux/windows × amd64/arm64`, attach to GitHub release
-- [ ] README: `go install github.com/mooracle/claude-budget@latest` + Homebrew instructions
-- [ ] write a smoke test / CI step asserting the binary builds for each target (`GOOS`/`GOARCH` matrix `go build`)
-- [ ] run `go test ./...`
+- [x] `Makefile`: `build`, `test` (`go test ./...`), `vet`, `update-rates` (also `check`, `build-all`, `clean`)
+- [x] document a manual rate-refresh procedure (edit base input/output in `data/claude-pricing.json`, bump `version`, `go test`) — there's no upstream machine-readable source to mirror byte-for-byte like tokentrack's YAML (README "Refreshing the rate card" + script header)
+- [x] (optional; defer to Post-Completion if fragile) `update-rates` script: **re-derive** cache tiers via the documented multipliers (0.1× / 1.25× / 2×), and **preserve** `note`/`source`/`version` — the upstream base-price *extraction* stays a manual edit (no machine-readable source; deferred per "if fragile"). Rate card reformatted once to the script's canonical jq output so future refreshes are clean minimal diffs.
+- [x] release workflow: build `darwin/linux/windows × amd64/arm64`, attach to GitHub release (`.github/workflows/release.yml`, tag-gated release job)
+- [x] README: `go install github.com/mooracle/claude-budget@latest` + Homebrew instructions
+- [x] write a smoke test / CI step asserting the binary builds for each target (`GOOS`/`GOARCH` matrix `go build`) — release.yml build matrix + `make build-all` (verified: 6/6 targets compile)
+- [x] run `go test ./...`
 
 ### Task 9: Verify acceptance criteria
 
