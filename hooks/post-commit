@@ -1,0 +1,13 @@
+#!/bin/sh
+# claude-budget
+# post-commit shim — promotes the watermark staged by prepare-commit-msg into
+# $GIT_DIR/claude-budget, so the next commit only attributes activity after this
+# one. Runs only after the commit is finalized; a cancelled commit never reaches
+# here, so its usage carries forward. The binary itself guards against rebase.
+
+if ! command -v claude-budget >/dev/null 2>&1; then
+  exit 0
+fi
+
+claude-budget consume || true
+exit 0

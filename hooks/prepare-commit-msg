@@ -1,0 +1,17 @@
+#!/bin/sh
+# claude-budget
+# prepare-commit-msg shim — delegates to the claude-budget binary, which scans
+# this repo's Claude Code transcripts, prices the branch's not-yet-consumed
+# usage, appends trailers to the commit message, and stages a watermark in
+# $GIT_DIR/claude-budget.pending. It does NOT consume — post-commit does that,
+# so a cancelled commit leaves usage intact (issue-#10 parity with Copilot Budget).
+#
+# $1 = path to the commit message file
+# $2 = commit source (message|template|merge|squash|commit), empty for a normal commit
+
+if ! command -v claude-budget >/dev/null 2>&1; then
+  exit 0   # binary not installed — never block a commit
+fi
+
+claude-budget trailer "$1" --source "${2:-}" || true
+exit 0

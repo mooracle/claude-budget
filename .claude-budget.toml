@@ -1,0 +1,17 @@
+# claude-budget configuration — committed to the repo so the whole team gets
+# identical commit trailers. Absent file or missing key falls back to defaults
+# (only Claude-Cost on, precision 2).
+
+[trailers]
+cost          = true    # Claude-Cost:        total USD cost of the commit's usage   (default on)
+costModels    = false   # Claude-Cost-Models: per-model USD breakdown
+tokens        = false   # Claude-Tokens:      total tokens (all 5 buckets)
+tokensModels  = false   # Claude-Tokens-Models: per-model token breakdown
+interactions  = false   # Claude-Interactions: deduped request count
+
+[format]
+costPrecision = 2       # decimal places on cost trailers
+
+# Optional: rename trailer keys to your team's standard.
+# [format.rename]
+# cost = "AI-Cost"      # → "AI-Cost: 0.42"

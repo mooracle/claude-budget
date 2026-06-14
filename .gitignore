@@ -1,0 +1,10 @@
+# Build output
+/claude-budget
+/dist/
+
+# Go
+*.test
+*.out
+
+# Editor / OS
+.DS_Store
