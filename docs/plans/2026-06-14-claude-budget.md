@@ -170,13 +170,13 @@ usage destined for the next real commit.
 **Files:**
 - Create: `e2e_test.go` (package `main`, runtime `gitAvailable()` gate + `t.Skip` — match tokentrack; no build tag)
 
-- [ ] helper: create throwaway repo (`os.MkdirTemp`), scrubbed env, install hooks pointing at the freshly built binary, seed a synthetic `~/.claude/projects` (via `HOME` override) with branch-labeled usage
-- [ ] case: real commit → message carries `Claude-Cost` trailer AND `<gitDir>/claude-budget` advanced; `.pending` gone
-- [ ] case: cancelled commit (empty msg / `GIT_EDITOR=false`) → no post-commit → state unchanged, usage still pending
-- [ ] case: rebase in progress → consume skipped, watermark not advanced
-- [ ] case: squash path → duplicate `Claude-Cost` lines summed; state untouched
-- [ ] case: `git commit --amend` → trailer reflects the re-scan; no duplicate trailer block (idempotency rule from Task 3)
-- [ ] gate on `git --version` (skip + log if absent); run `go test ./...`
+- [x] helper: create throwaway repo (`os.MkdirTemp`), scrubbed env, install hooks pointing at the freshly built binary, seed a synthetic `~/.claude/projects` (via `HOME` override) with branch-labeled usage
+- [x] case: real commit → message carries `Claude-Cost` trailer AND `<gitDir>/claude-budget` advanced; `.pending` gone
+- [x] case: cancelled commit (empty msg / `GIT_EDITOR=false`) → no post-commit → state unchanged, usage still pending
+- [x] case: rebase in progress → consume skipped, watermark not advanced
+- [x] case: squash path → duplicate `Claude-Cost` lines summed; state untouched
+- [x] case: `git commit --amend` → trailer reflects the re-scan; no duplicate trailer block (idempotency rule from Task 3). Note: a bare `--amend` arrives as source `commit` (clear path), so the existing single trailer is reused, not duplicated; the re-scan/idempotency rule itself is covered by the trailer re-run case + `main_test.go`.
+- [x] gate on `git --version` (skip + log if absent); run `go test ./...`
 
 ### Task 8: Distribution (Makefile + release)
 
