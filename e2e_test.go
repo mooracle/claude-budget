@@ -434,13 +434,24 @@ func TestE2E_AmendDoesNotDuplicateTrailer(t *testing.T) {
 	r.commit("feat", "f.txt", "hello\n")
 	before := r.state().HwmFor("main")
 
-	// GIT_EDITOR=true (from the scrubbed env) makes the amend's editor a no-op; the
-	// existing message — already carrying one trailer — is reused as-is.
+	// New usage lands after the commit but before the amend. A bare `git commit
+	// --amend` arrives as source "commit" → routeClear: no scan, the existing
+	// message (already carrying the 0.10 trailer) is reused verbatim. Seeding this
+	// record is what makes the test actually exercise the routing: were amend
+	// mis-routed to the normal path, a scan since the watermark would find r2
+	// ($0.20) and append a second, differently valued trailer. Without it, the
+	// re-scan finds nothing and the assertions pass regardless of the route.
+	r.seed("main", usageRec{e2eTs2, "r2", "claude-opus-4-8", 0, 8000}) // 0.20
+
+	// GIT_EDITOR=true (from the scrubbed env) makes the amend's editor a no-op.
 	r.run(r.root, "git", "commit", "--amend")
 
 	msg := r.headMessage()
 	if n := strings.Count(msg, "Claude-Cost:"); n != 1 {
 		t.Fatalf("amend duplicated the cost trailer (got %d):\n%s", n, msg)
+	}
+	if !strings.Contains(msg, "Claude-Cost: 0.10") {
+		t.Fatalf("amend should reuse the original 0.10 trailer, not rescan:\n%s", msg)
 	}
 	if after := r.state().HwmFor("main"); after != before {
 		t.Errorf("amend changed the watermark: %d -> %d", before, after)
@@ -550,7 +561,13 @@ func TestE2E_VerboseScissorsTrailerSurvives(t *testing.T) {
 	if trailer < 0 {
 		t.Fatalf("cost trailer missing from verbose message:\n%s", got)
 	}
-	if scissors >= 0 && trailer > scissors {
+	// Assert the cut line is still present before comparing positions; otherwise a
+	// fixture regression that dropped it would make the placement check vacuously
+	// pass.
+	if scissors < 0 {
+		t.Fatalf("scissors cut line vanished from the message (fixture regression):\n%s", got)
+	}
+	if trailer > scissors {
 		t.Fatalf("trailer is below the scissors cut line (git would discard it):\n%s", got)
 	}
 }

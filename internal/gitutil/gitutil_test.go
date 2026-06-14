@@ -141,17 +141,23 @@ func TestRebaseInProgress(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GitDir: %v", err)
 	}
-	marker := filepath.Join(gd, "rebase-merge")
-	if err := os.MkdirAll(marker, 0o755); err != nil {
-		t.Fatalf("mkdir rebase-merge: %v", err)
-	}
-	if !RebaseInProgress() {
-		t.Error("RebaseInProgress = false with a rebase-merge dir present, want true")
-	}
-	if err := os.RemoveAll(marker); err != nil {
-		t.Fatalf("rm rebase-merge: %v", err)
-	}
-	if RebaseInProgress() {
-		t.Error("RebaseInProgress = true after removing the marker, want false")
+	// Both backends must be detected: rebase-merge (interactive / merge-backend
+	// rebase) and rebase-apply (git am / non-interactive rebase). consume's guard
+	// relies on either marker, so a regression dropping one would silently let
+	// consume promote watermarks mid-replay.
+	for _, dir := range []string{"rebase-merge", "rebase-apply"} {
+		marker := filepath.Join(gd, dir)
+		if err := os.MkdirAll(marker, 0o755); err != nil {
+			t.Fatalf("mkdir %s: %v", dir, err)
+		}
+		if !RebaseInProgress() {
+			t.Errorf("RebaseInProgress = false with a %s dir present, want true", dir)
+		}
+		if err := os.RemoveAll(marker); err != nil {
+			t.Fatalf("rm %s: %v", dir, err)
+		}
+		if RebaseInProgress() {
+			t.Errorf("RebaseInProgress = true after removing %s, want false", dir)
+		}
 	}
 }

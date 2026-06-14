@@ -351,6 +351,50 @@ func TestConsume_RebaseRetainsMarkerUntouched(t *testing.T) {
 	}
 }
 
+func TestMoney(t *testing.T) {
+	cases := []struct {
+		v    float64
+		want string
+	}{
+		{0, "$0.00"},            // exact zero stays two-decimal
+		{0.10, "$0.10"},         // normal cents
+		{12.5, "$12.50"},        // dollars
+		{0.006, "$0.01"},        // >= 0.005 → two-decimal cents
+		{0.004, "$0.004000"},    // < 0.005 → six-decimal sub-cent
+		{0.000001, "$0.000001"}, // tiny usage stays visible, not rounded to $0.00
+	}
+	for _, tc := range cases {
+		if got := money(tc.v); got != tc.want {
+			t.Errorf("money(%v) = %q, want %q", tc.v, got, tc.want)
+		}
+	}
+}
+
+func TestEnabledTrailers(t *testing.T) {
+	cases := []struct {
+		name string
+		tr   config.Trailers
+		want string
+	}{
+		{"default (cost only)", config.Trailers{Cost: true}, "cost"},
+		{"none", config.Trailers{}, "(none)"},
+		{"subset", config.Trailers{Cost: true, Tokens: true}, "cost, tokens"},
+		{
+			"all on keeps declaration order",
+			config.Trailers{Cost: true, CostModels: true, Tokens: true, TokensModels: true, Interactions: true},
+			"cost, costModels, tokens, tokensModels, interactions",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := &config.Config{Trailers: tc.tr}
+			if got := enabledTrailers(cfg); got != tc.want {
+				t.Errorf("enabledTrailers(%+v) = %q, want %q", tc.tr, got, tc.want)
+			}
+		})
+	}
+}
+
 // Guard the staged watermark fields against accidental reordering/rename.
 func TestDecideTrailer_StagePayloadShape(t *testing.T) {
 	res := usefulResult()
