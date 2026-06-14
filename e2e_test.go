@@ -526,6 +526,49 @@ func TestE2E_ClearSourceDropsPendingMarker(t *testing.T) {
 	}
 }
 
+// A prepare-hook error on the normal path (here: a malformed config) must drop any
+// stale pending marker a previous cancelled commit left behind. Otherwise the
+// commit proceeds trailer-less yet post-commit promotes the old watermark,
+// consuming usage no trailer ever recorded. The hook still exits 0 (never blocks
+// the commit), but the marker is cleared so the usage carries forward.
+func TestE2E_PrepareHookErrorClearsStalePendingMarker(t *testing.T) {
+	r := newE2ERepo(t)
+	// Simulate the leftover marker from an earlier cancelled commit.
+	stale := state.Pending{Branch: "main", HwmMs: 4242, LastRequestID: "r-stale"}
+	if err := state.WritePending(r.gitDir, stale); err != nil {
+		t.Fatalf("WritePending: %v", err)
+	}
+	// Malformed TOML makes config.Load fail in the normal path before it can
+	// rewrite or clear the marker.
+	r.writeFile(".claude-budget.toml", "[trailers\n")
+	r.seed("main", usageRec{e2eTs1, "r1", "claude-opus-4-8", 0, 4000})
+	msgFile := filepath.Join(r.gitDir, "MSG_ERR")
+	if err := os.WriteFile(msgFile, []byte("subject\n"), 0o644); err != nil {
+		t.Fatalf("write msg: %v", err)
+	}
+
+	// run() fails the test on a non-zero exit, so this also asserts the hook never
+	// blocks the commit despite the config error.
+	r.run(r.root, binPath, "trailer", msgFile, "--source", "")
+
+	if r.pendingExists() {
+		t.Error("a prepare-hook error must drop the stale pending marker")
+	}
+	got, err := os.ReadFile(msgFile)
+	if err != nil {
+		t.Fatalf("read msg: %v", err)
+	}
+	if strings.Contains(string(got), "Claude-Cost:") {
+		t.Errorf("config error must not append a trailer:\n%s", got)
+	}
+	// With the marker gone, a subsequent post-commit promotes nothing, so the
+	// watermark stays put and the usage carries forward to the next good commit.
+	r.run(r.root, binPath, "consume")
+	if got := r.state().HwmFor("main"); got != 0 {
+		t.Errorf("watermark advanced to %d after a trailer-less commit, want 0", got)
+	}
+}
+
 // Verbose commits ('commit -v' / commit.verbose=true) hand prepare-commit-msg a
 // message that ends with a scissors cut line and the raw diff. The trailer must
 // land above that cut line; appended at the very end it sits below the cut line,

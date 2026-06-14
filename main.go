@@ -273,6 +273,26 @@ func trailerMain(args []string) error {
 	if err != nil {
 		return fmt.Errorf("resolve git dir (not in a git repo?): %w", err)
 	}
+	if err := dispatchTrailer(gitDir, source, msgFile); err != nil {
+		// A prepare-hook failure must not leave a stale pending marker behind. A
+		// previous cancelled commit may have staged one, and post-commit promotes
+		// whatever marker it finds regardless of whether this commit actually got
+		// a trailer. Without clearing it, an error here (e.g. a malformed config)
+		// lets the commit proceed trailer-less while post-commit still consumes
+		// the old watermark — silently eating usage no trailer ever recorded. Drop
+		// it so the unconsumed usage carries forward (state is untouched) to the
+		// next commit that successfully decides a trailer.
+		if cerr := state.ClearPending(gitDir); cerr != nil {
+			fmt.Fprintln(os.Stderr, "claude-budget trailer: clear stale pending marker:", cerr)
+		}
+		return err
+	}
+	return nil
+}
+
+// dispatchTrailer routes a prepare-commit-msg invocation to the path for its
+// commit source. Its caller clears the pending marker on any returned error.
+func dispatchTrailer(gitDir, source, msgFile string) error {
 	switch routeTrailer(source, gitutil.RebaseInProgress()) {
 	case routeClear:
 		return state.ClearPending(gitDir)
