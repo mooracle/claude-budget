@@ -1,11 +1,14 @@
 package main
 
 import (
+	"os"
+	"path/filepath"
 	"reflect"
 	"testing"
 
 	"github.com/mooracle/claude-budget/internal/config"
 	"github.com/mooracle/claude-budget/internal/reader"
+	"github.com/mooracle/claude-budget/internal/state"
 )
 
 func TestRouteTrailer(t *testing.T) {
@@ -245,6 +248,62 @@ func TestSplitTrailingComments(t *testing.T) {
 				t.Fatalf("got (body=%q, comments=%q), want (body=%q, comments=%q)", body, comments, tc.wantBody, tc.wantComments)
 			}
 		})
+	}
+}
+
+func TestConsume_PromotesAndClears(t *testing.T) {
+	gitDir := t.TempDir()
+	if err := state.WritePending(gitDir, state.Pending{Branch: "feature", HwmMs: 1700000000123, LastRequestID: "req-zzz"}); err != nil {
+		t.Fatalf("WritePending: %v", err)
+	}
+	if err := consume(gitDir, false); err != nil {
+		t.Fatalf("consume: %v", err)
+	}
+	// State advanced for the branch.
+	st, err := state.Load(gitDir)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if got := st.Branches["feature"]; got.HwmMs != 1700000000123 || got.LastRequestID != "req-zzz" {
+		t.Fatalf("branch state = %+v, want {1700000000123 req-zzz}", got)
+	}
+	// Marker cleared.
+	if _, ok, err := state.ReadPending(gitDir); err != nil || ok {
+		t.Fatalf("ReadPending after consume = (ok=%v, err=%v), want (false, nil)", ok, err)
+	}
+}
+
+func TestConsume_NoPendingIsNoop(t *testing.T) {
+	gitDir := t.TempDir()
+	if err := consume(gitDir, false); err != nil {
+		t.Fatalf("consume with no pending: %v", err)
+	}
+	// No state file written when there's nothing to promote.
+	if _, err := os.Stat(filepath.Join(gitDir, "claude-budget")); !os.IsNotExist(err) {
+		t.Fatalf("expected no state file, stat err = %v", err)
+	}
+}
+
+func TestConsume_RebaseRetainsMarkerUntouched(t *testing.T) {
+	gitDir := t.TempDir()
+	pend := state.Pending{Branch: "feature", HwmMs: 42, LastRequestID: "req-a"}
+	if err := state.WritePending(gitDir, pend); err != nil {
+		t.Fatalf("WritePending: %v", err)
+	}
+	if err := consume(gitDir, true); err != nil {
+		t.Fatalf("consume during rebase: %v", err)
+	}
+	// Marker retained exactly as staged (not read, not cleared).
+	got, ok, err := state.ReadPending(gitDir)
+	if err != nil || !ok {
+		t.Fatalf("ReadPending = (ok=%v, err=%v), want marker present", ok, err)
+	}
+	if got != pend {
+		t.Fatalf("pending = %+v, want %+v", got, pend)
+	}
+	// State untouched: no state file should have been written.
+	if _, err := os.Stat(filepath.Join(gitDir, "claude-budget")); !os.IsNotExist(err) {
+		t.Fatalf("rebase path must not write state, stat err = %v", err)
 	}
 }
 

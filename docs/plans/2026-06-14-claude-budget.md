@@ -143,12 +143,12 @@ Order matters: check rebase **before** reading the marker, and **never clear the
 on the rebase path** — a `pick` step fires post-commit, and clearing there would swallow
 usage destined for the next real commit.
 
-- [ ] if `gitutil.RebaseInProgress()` → exit 0 (do NOT read or clear the marker)
-- [ ] `ReadPending(gitDir)`; if absent → exit 0
-- [ ] else promote: `state.SetBranch(pending.Branch, {HwmMs, LastRequestID})`, `state.Save`, then `ClearPending`
-- [ ] never error-out; log + exit 0 on failure
-- [ ] write tests: pending present (no rebase) → state advanced + marker cleared; no pending → no-op; **rebase in progress → marker retained AND not read, state unchanged**
-- [ ] run `go test ./...` — must pass before next task
+- [x] if `gitutil.RebaseInProgress()` → exit 0 (do NOT read or clear the marker)
+- [x] `ReadPending(gitDir)`; if absent → exit 0
+- [x] else promote: `state.SetBranch(pending.Branch, {HwmMs, LastRequestID})`, `state.Save`, then `ClearPending`
+- [x] never error-out; log + exit 0 on failure
+- [x] write tests: pending present (no rebase) → state advanced + marker cleared; no pending → no-op; **rebase in progress → marker retained AND not read, state unchanged**
+- [x] run `go test ./...` — must pass before next task
 
 ### Task 6: Backfill unit tests for already-built packages
 

@@ -59,8 +59,7 @@ func main() {
 	case "trailer":
 		err = runTrailer(os.Args[2:])
 	case "consume":
-		fmt.Fprintf(os.Stderr, "claude-budget consume: not yet implemented — see docs/plans/2026-06-14-claude-budget.md\n")
-		os.Exit(1)
+		err = runConsume()
 	default:
 		usage()
 		os.Exit(2)
@@ -457,6 +456,58 @@ func splitTrailingComments(content string) (body, comments string) {
 	return strings.Join(lines[:start], "\n"), strings.Join(lines[start:], "\n")
 }
 
+// --- consume command (post-commit brain) -------------------------------------
+
+// runConsume is the post-commit entry point. Like trailer, it must never block:
+// any internal failure is logged to stderr and we still report success (exit 0).
+func runConsume() error {
+	if err := consumeMain(); err != nil {
+		fmt.Fprintln(os.Stderr, "claude-budget consume:", err)
+	}
+	return nil
+}
+
+func consumeMain() error {
+	gitDir, err := gitutil.GitDir()
+	if err != nil {
+		return fmt.Errorf("resolve git dir (not in a git repo?): %w", err)
+	}
+	return consume(gitDir, gitutil.RebaseInProgress())
+}
+
+// consume promotes the watermark that prepare-commit-msg staged in the pending
+// marker into per-branch state, then clears the marker.
+//
+// Order matters: the rebase check comes before reading the marker, and the
+// rebase path never reads or clears it. A `pick` step fires post-commit during a
+// rebase; clearing the marker there would swallow usage destined for the next
+// real commit. A cancelled commit never reaches post-commit at all, so its
+// staged marker simply waits for the next successful commit.
+//
+// gitDir and rebasing are passed in so the promotion logic is unit-testable
+// without driving a real git rebase.
+func consume(gitDir string, rebasing bool) error {
+	if rebasing {
+		return nil // marker survives, untouched, to the next real commit
+	}
+	pending, ok, err := state.ReadPending(gitDir)
+	if err != nil {
+		return fmt.Errorf("read pending marker: %w", err)
+	}
+	if !ok {
+		return nil // nothing staged (e.g. a cancelled or trailer-less commit)
+	}
+	st, err := state.Load(gitDir)
+	if err != nil {
+		return fmt.Errorf("load state: %w", err)
+	}
+	st.SetBranch(pending.Branch, state.Branch{HwmMs: pending.HwmMs, LastRequestID: pending.LastRequestID})
+	if err := st.Save(gitDir); err != nil {
+		return fmt.Errorf("save state: %w", err)
+	}
+	return state.ClearPending(gitDir)
+}
+
 func runPriceDemo() error {
 	rc, err := pricing.Load(pricingData)
 	if err != nil {
@@ -495,7 +546,7 @@ usage:
   claude-budget uninstall   remove the git hook pair
   claude-budget status      show this branch's uncommitted usage and cost
   claude-budget trailer <msgfile> --source <s>   append cost trailers (prepare-commit-msg)
-  claude-budget consume             promote the staged watermark (post-commit)  [pending]
+  claude-budget consume             promote the staged watermark (post-commit)
   claude-budget price       smoke-test: load the rate card and price a sample
   claude-budget version     print version
 `)
