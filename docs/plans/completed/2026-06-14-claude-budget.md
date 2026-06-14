@@ -204,9 +204,9 @@ usage destined for the next real commit.
 
 ### Task 10: Docs + close out
 
-- [ ] update `README.md` (write path now live) and any new patterns
-- [ ] resolve or explicitly defer the Open Questions below
-- [ ] `mkdir -p docs/plans/completed` and move this plan there
+- [x] update `README.md` (write path now live) and any new patterns
+- [x] resolve or explicitly defer the Open Questions below
+- [x] `mkdir -p docs/plans/completed` and move this plan there
 
 ## Technical Details
 
@@ -216,12 +216,12 @@ usage destined for the next real commit.
 - **Trailer block:** append after a blank line; on re-run of `prepare-commit-msg` for the same message, don't duplicate an already-present trailer block.
 - **TOML dep:** Task 1 is the first to require network (`go mod download BurntSushi/toml`).
 
-## Open Questions (deferred — decide in Task 10)
+## Open Questions (resolved in Task 10)
 
-- **Detached HEAD:** `gitBranch` in records is empty/sha and `branch == "HEAD"` — skip attribution, or fall back to timestamp-only? (Currently `status` just notes it.)
-- **Subscription users:** add a token-only trailer (`Claude-Tokens`) to the *defaults* for Max/Pro users who don't care about USD?
-- **Same-repo dual-window:** last-writer-wins on `<gitDir>/claude-budget` (shared git dir). Pre-existing tokentrack limitation; likely out of scope.
-- **Trailer surface for v1:** `tokens` / `tokensModels` / `interactions` + `[format.rename]` are config-gated off by default and already in the committed `.claude-budget.toml` contract. If they don't earn their keep (rename especially complicates the Task 4 sum path), consider shipping `cost` + `costModels` only and deferring the rest.
+- **Detached HEAD — RESOLVED: skip attribution.** Records carry a real branch name, so a `branch == "HEAD"` scan matches ~nothing; `runTrailerNormal` clears the pending marker and attaches no trailer, and `status` notes the detached state. No timestamp-only fallback — it would mis-attribute usage to whatever commit happens to land. Implemented (Task 3) and covered by tests.
+- **Subscription users — RESOLVED: no default change; opt-in stays.** Defaults remain cost-only (`Claude-Cost`, precision 2). Max/Pro users who want token visibility set `tokens = true` (and optionally `tokensModels`/`interactions`) in `.claude-budget.toml`. Shipping a USD trailer by default is the right signal for the API-cost framing; a per-account "I'm on a subscription" mode is out of scope for v1.
+- **Same-repo dual-window — DEFERRED (out of scope).** Last-writer-wins on `<gitDir>/claude-budget` when two windows share a git dir. Pre-existing tokentrack limitation; no locking added in v1. Revisit only if it bites in practice.
+- **Trailer surface for v1 — RESOLVED: ship the full surface.** `tokens` / `tokensModels` / `interactions` + `[format.rename]` stay in the config contract. The rename-aware sum path (Task 4) is implemented and tested (`SumDuplicates` derives the cost trailer name from `Format.Rename["cost"]`), so rename earns its keep without breaking squash summing. All non-cost trailers remain off by default.
 
 ## Post-Completion
 

@@ -9,11 +9,13 @@ same per-commit attribution idea, but sourced from Claude Code's own session
 transcripts instead of an OTel database, and shipped as a single static Go binary
 with no runtime dependencies.
 
-> Status: **`setup` / `status` / `uninstall` work today.** Pricing, the transcript
-> reader, git/hook/state plumbing are implemented and validated against real
-> transcripts. The `trailer` / `consume` write path and `.claude-budget.toml`
-> parsing are the remaining work — see
-> [docs/plans/2026-06-14-claude-budget.md](docs/plans/2026-06-14-claude-budget.md).
+> Status: **complete.** `setup` / `status` / `uninstall` and the full
+> `trailer` / `consume` write path are live: a `git commit` now appends the
+> configured trailers and advances the per-branch watermark. Pricing, the
+> transcript reader, git/hook/state plumbing, `.claude-budget.toml` parsing, the
+> unit suite, and a real-`git` e2e suite are all implemented and green
+> (`go test ./...`). The implementation plan is archived under
+> [docs/plans/completed/](docs/plans/completed/).
 
 ## How it works
 
@@ -28,7 +30,7 @@ There is no daemon. The binary is the brain, invoked by two thin shell hooks:
 
 ```
 git commit
-  └─ prepare-commit-msg → claude-budget trailer "$1"
+  └─ prepare-commit-msg → claude-budget trailer "$1" --source "$2"
        · scan ~/.claude/projects/* for cwd under this repo
        · keep records: gitBranch == <current> AND timestamp > branch high-water mark
        · dedup by requestId (~43% of records are streaming duplicates)
@@ -38,8 +40,28 @@ git commit
        · promote the staged watermark into .git/claude-budget (unless rebasing)
 ```
 
-A cancelled commit never reaches `post-commit`, so its usage carries forward —
-the same deferred-truncation guarantee as Copilot Budget (issue #10).
+The shims are deliberately thin — they forward git's message file and `$2`
+source hint to the binary, which owns all routing. A cancelled commit never
+reaches `post-commit`, so its usage carries forward — the same
+deferred-truncation guarantee as Copilot Budget (issue #10).
+
+### Rebase, squash & amend
+
+The `trailer` command routes on git's `$2` source hint plus rebase state, so
+history rewrites don't double-count or lose usage:
+
+- **merge / cherry-pick / `-c`/`-C` reuse** (`merge`, `commit` source) — clears
+  the pending marker and attaches no trailer.
+- **squash / `rebase -i` reword** — sums any duplicate cost trailers carried in
+  from the squashed commits into a single line (the cost trailer name is
+  config-derived, so `[format.rename]` keeps working), and leaves the watermark
+  untouched.
+- **rebase in progress** — `consume` is a no-op and never reads or clears the
+  marker, so usage destined for the next real commit survives the replay.
+- **`git commit --amend`** — re-scans and reuses the existing trailer rather than
+  appending a duplicate block (the trailer block is idempotent on re-run).
+- **detached HEAD** — usage records carry a real branch name, so a detached
+  checkout matches nothing; no trailer is attached.
 
 ## Install
 
@@ -66,6 +88,10 @@ claude-budget status       # show this branch's uncommitted Claude usage + cost
 claude-budget uninstall    # remove the hooks
 claude-budget price        # smoke-test the embedded rate card
 ```
+
+`trailer` and `consume` also exist as subcommands but are invoked by the
+installed hooks, not run by hand. After `setup`, just `git commit` as usual —
+the trailers attach automatically.
 
 ## Configuration
 
