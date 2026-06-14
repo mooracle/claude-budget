@@ -107,16 +107,16 @@ all source routing** tokentrack does in shell (`commitHook.ts` lines 63-92). Rou
 | `squash` | — | **sum path** (Task 4) |
 | any | yes | **sum path** (Task 4) — rebase guard wins |
 
-- [ ] parse args: `trailer <msgfile> --source <s>`
-- [ ] route per the table: rebase (`gitutil.RebaseInProgress`) or `squash` → Task 4; `merge`/`commit` → ClearPending + exit 0; else normal
-- [ ] normal path: resolve repoRoot/gitDir/branch; load rate card, config, state; `reader.Scan` since `state.HwmFor(branch)`
-- [ ] `branch == "HEAD"` (detached) → scan matches ~0 records (records carry a real branch) → ClearPending, exit 0 (no attribution; finalize policy in Task 10)
-- [ ] if trailers non-empty: append a blank-line-separated trailer block. Idempotency: if the exact block this run would append is already the file's tail (re-run of the same commit), skip; else append
-- [ ] stage `state.Pending{Branch, HwmMs: res.MaxTsMs, LastRequestID: res.MaxRequestID}` via `WritePending` — **do not** touch the state file (deferred consume)
-- [ ] empty result / trailers disabled → ClearPending, exit 0
-- [ ] never error-out the hook: log to stderr, exit 0 on any internal failure
-- [ ] write tests: routing table (each `$2` × rebase state → correct path); normal append; idempotent re-run; detached HEAD → no trailer; pending staged with correct watermark; `merge`/`commit`/empty-result clear the marker
-- [ ] run `go test ./...` — must pass before next task
+- [x] parse args: `trailer <msgfile> --source <s>`
+- [x] route per the table: rebase (`gitutil.RebaseInProgress`) or `squash` → Task 4; `merge`/`commit` → ClearPending + exit 0; else normal
+- [x] normal path: resolve repoRoot/gitDir/branch; load rate card, config, state; `reader.Scan` since `state.HwmFor(branch)`
+- [x] `branch == "HEAD"` (detached) → scan matches ~0 records (records carry a real branch) → ClearPending, exit 0 (no attribution; finalize policy in Task 10)
+- [x] if trailers non-empty: append a blank-line-separated trailer block. Idempotency: if the exact block this run would append is already the file's tail (re-run of the same commit), skip; else append
+- [x] stage `state.Pending{Branch, HwmMs: res.MaxTsMs, LastRequestID: res.MaxRequestID}` via `WritePending` — **do not** touch the state file (deferred consume)
+- [x] empty result / trailers disabled → ClearPending, exit 0
+- [x] never error-out the hook: log to stderr, exit 0 on any internal failure
+- [x] write tests: routing table (each `$2` × rebase state → correct path); normal append; idempotent re-run; detached HEAD → no trailer; pending staged with correct watermark; `merge`/`commit`/empty-result clear the marker
+- [x] run `go test ./...` — must pass before next task
 
 > `git commit --amend` arrives as a normal source and re-scans/re-appends — covered by the amend e2e case in Task 7; if problematic, defer via Open Questions.
 

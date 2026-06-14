@@ -22,6 +22,7 @@ import (
 	"github.com/mooracle/claude-budget/internal/pricing"
 	"github.com/mooracle/claude-budget/internal/reader"
 	"github.com/mooracle/claude-budget/internal/state"
+	"github.com/mooracle/claude-budget/internal/trailer"
 )
 
 // The canonical rate card lives in data/ and is embedded at build time; pricing
@@ -55,8 +56,10 @@ func main() {
 		err = runStatus()
 	case "price":
 		err = runPriceDemo()
-	case "trailer", "consume":
-		fmt.Fprintf(os.Stderr, "claude-budget %s: not yet implemented — see docs/plans/2026-06-14-claude-budget.md\n", os.Args[1])
+	case "trailer":
+		err = runTrailer(os.Args[2:])
+	case "consume":
+		fmt.Fprintf(os.Stderr, "claude-budget consume: not yet implemented — see docs/plans/2026-06-14-claude-budget.md\n")
 		os.Exit(1)
 	default:
 		usage()
@@ -196,6 +199,248 @@ func enabledTrailers(cfg *config.Config) string {
 	return strings.Join(on, ", ")
 }
 
+// --- trailer command (prepare-commit-msg brain) ------------------------------
+
+// trailerRoute is how a `trailer` invocation is dispatched, decided from the
+// commit source ($2) and rebase state. The thin shim pushes all routing into the
+// binary; see the routing table in docs/plans/2026-06-14-claude-budget.md.
+type trailerRoute int
+
+const (
+	routeNormal trailerRoute = iota // scan → append trailers → stage watermark
+	routeSum                        // rebase/squash: sum duplicate cost trailers (Task 4)
+	routeClear                      // merge / cherry-pick reuse: no trailer, drop the marker
+)
+
+// routeTrailer maps (source, rebaseInProgress) to a dispatch decision.
+//
+//	merge | commit            → clear  (merge commit, or message reuse via -c/-C/cherry-pick)
+//	squash                    → sum
+//	<rebase in progress>      → sum    (rebase guard wins over a normal source)
+//	empty | template | message→ normal
+func routeTrailer(source string, rebasing bool) trailerRoute {
+	switch source {
+	case "merge", "commit":
+		return routeClear
+	case "squash":
+		return routeSum
+	}
+	if rebasing {
+		return routeSum
+	}
+	return routeNormal
+}
+
+// parseTrailerArgs extracts the message-file path and the --source value from the
+// args following the "trailer" token. The shim always calls
+//
+//	claude-budget trailer "$1" --source "${2:-}"
+//
+// but we parse defensively: --source may be absent or carry an empty value, and
+// the --source=<v> form is accepted too.
+func parseTrailerArgs(args []string) (msgFile, source string) {
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		switch {
+		case a == "--source":
+			if i+1 < len(args) {
+				source = args[i+1]
+				i++
+			}
+		case strings.HasPrefix(a, "--source="):
+			source = strings.TrimPrefix(a, "--source=")
+		case msgFile == "" && !strings.HasPrefix(a, "-"):
+			msgFile = a
+		}
+	}
+	return msgFile, source
+}
+
+// runTrailer is the prepare-commit-msg entry point. It must never block a commit:
+// any internal failure is logged to stderr and we still report success (exit 0).
+func runTrailer(args []string) error {
+	if err := trailerMain(args); err != nil {
+		fmt.Fprintln(os.Stderr, "claude-budget trailer:", err)
+	}
+	return nil
+}
+
+func trailerMain(args []string) error {
+	msgFile, source := parseTrailerArgs(args)
+	if msgFile == "" {
+		return fmt.Errorf("missing commit-message file argument")
+	}
+	gitDir, err := gitutil.GitDir()
+	if err != nil {
+		return fmt.Errorf("resolve git dir (not in a git repo?): %w", err)
+	}
+	switch routeTrailer(source, gitutil.RebaseInProgress()) {
+	case routeClear:
+		return state.ClearPending(gitDir)
+	case routeSum:
+		return runTrailerSum(gitDir, msgFile)
+	default:
+		return runTrailerNormal(gitDir, msgFile)
+	}
+}
+
+// runTrailerSum handles the rebase/squash path. The full duplicate-trailer
+// summing lands in Task 4; the invariant established here is the one Task 4 must
+// preserve — this path never reads or advances the watermark and always clears
+// the pending marker so usage carries forward to the next normal commit.
+func runTrailerSum(gitDir, msgFile string) error {
+	// TODO(Task 4): read msgFile, trailer.SumDuplicates on the cost trailer,
+	// write back. Until then the only guaranteed action is clearing the marker.
+	_ = msgFile
+	return state.ClearPending(gitDir)
+}
+
+// runTrailerNormal scans this branch's not-yet-consumed usage, appends the
+// configured trailer block to the message, and stages the watermark for
+// post-commit to promote. It deliberately does not touch the state file
+// (consume does that), so a cancelled commit leaves usage intact.
+func runTrailerNormal(gitDir, msgFile string) error {
+	root, err := gitutil.RepoRoot()
+	if err != nil {
+		return fmt.Errorf("resolve repo root: %w", err)
+	}
+	branch, err := gitutil.CurrentBranch()
+	if err != nil {
+		return fmt.Errorf("resolve branch: %w", err)
+	}
+	// Detached HEAD: usage records carry a real branch name, so a scan for
+	// "HEAD" matches ~0 records. Skip attribution and drop any stale marker.
+	if branch == "HEAD" {
+		return state.ClearPending(gitDir)
+	}
+	rc, err := pricing.Load(pricingData)
+	if err != nil {
+		return fmt.Errorf("load rate card: %w", err)
+	}
+	cfg, err := config.Load(root)
+	if err != nil {
+		return fmt.Errorf("load config: %w", err)
+	}
+	st, err := state.Load(gitDir)
+	if err != nil {
+		return fmt.Errorf("load state: %w", err)
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return err
+	}
+	projects := filepath.Join(home, ".claude", "projects")
+	res, err := reader.Scan(projects, root, branch, st.HwmFor(branch), rc)
+	if err != nil {
+		return fmt.Errorf("scan transcripts: %w", err)
+	}
+
+	cur, err := os.ReadFile(msgFile)
+	if err != nil {
+		return fmt.Errorf("read commit message %q: %w", msgFile, err)
+	}
+	d := decideTrailer(res, cfg, branch, string(cur))
+	if d.changed {
+		if err := os.WriteFile(msgFile, []byte(d.newMsg), 0o644); err != nil {
+			return fmt.Errorf("write commit message: %w", err)
+		}
+	}
+	if d.stage == nil {
+		return state.ClearPending(gitDir)
+	}
+	return state.WritePending(gitDir, *d.stage)
+}
+
+// trailerDecision is the pure outcome of the normal path for a scanned result.
+type trailerDecision struct {
+	newMsg  string         // commit-message content to write
+	changed bool           // whether newMsg differs from the input (skip the write if false)
+	stage   *state.Pending // watermark to stage, or nil to clear the marker instead
+}
+
+// decideTrailer computes the normal-path outcome purely from inputs (no I/O), so
+// the routing, idempotency, and watermark logic are unit-testable without git.
+// A detached HEAD or an empty/disabled trailer set both yield "change nothing,
+// clear the marker".
+func decideTrailer(res *reader.Result, cfg *config.Config, branch, curMsg string) trailerDecision {
+	if branch == "HEAD" {
+		return trailerDecision{newMsg: curMsg}
+	}
+	lines := trailer.Format(res, cfg)
+	if len(lines) == 0 {
+		return trailerDecision{newMsg: curMsg}
+	}
+	newMsg, changed := appendTrailerBlock(curMsg, lines)
+	return trailerDecision{
+		newMsg:  newMsg,
+		changed: changed,
+		stage: &state.Pending{
+			Branch:        branch,
+			HwmMs:         res.MaxTsMs,
+			LastRequestID: res.MaxRequestID,
+		},
+	}
+}
+
+// appendTrailerBlock inserts the trailer lines as a blank-line-separated block at
+// the end of the editable message body, before any trailing git comment block.
+// It is idempotent: if that exact block is already the tail of the body (a re-run
+// of prepare-commit-msg for the same commit, or an amend reusing the message), it
+// returns the input unchanged.
+func appendTrailerBlock(content string, lines []string) (string, bool) {
+	block := strings.Join(lines, "\n")
+	body, comments := splitTrailingComments(content)
+	bodyTrim := strings.TrimRight(body, "\n")
+
+	if bodyTrim == block || strings.HasSuffix(bodyTrim, "\n"+block) {
+		return content, false // already present as the body's tail
+	}
+
+	var b strings.Builder
+	b.WriteString(bodyTrim)
+	if bodyTrim != "" {
+		b.WriteString("\n\n")
+	}
+	b.WriteString(block)
+	if comments != "" {
+		b.WriteString("\n\n")
+		b.WriteString(comments)
+	} else {
+		b.WriteString("\n")
+	}
+	return b.String(), true
+}
+
+// splitTrailingComments separates the editable body from the trailing block of
+// git-generated comment lines. The comment block is the maximal suffix of the
+// content beginning at a '#' line where every following line is blank or another
+// '#' comment — matching git's default editor template (verbose/scissors mode,
+// whose diff lines aren't comments, is not handled and falls through to append).
+func splitTrailingComments(content string) (body, comments string) {
+	lines := strings.Split(content, "\n")
+	start := -1
+	for i := range lines {
+		if !strings.HasPrefix(lines[i], "#") {
+			continue
+		}
+		allCommentOrBlank := true
+		for j := i; j < len(lines); j++ {
+			if lines[j] != "" && !strings.HasPrefix(lines[j], "#") {
+				allCommentOrBlank = false
+				break
+			}
+		}
+		if allCommentOrBlank {
+			start = i
+			break
+		}
+	}
+	if start < 0 {
+		return content, ""
+	}
+	return strings.Join(lines[:start], "\n"), strings.Join(lines[start:], "\n")
+}
+
 func runPriceDemo() error {
 	rc, err := pricing.Load(pricingData)
 	if err != nil {
@@ -233,7 +478,7 @@ usage:
   claude-budget setup       install the git hook pair in this repo
   claude-budget uninstall   remove the git hook pair
   claude-budget status      show this branch's uncommitted usage and cost
-  claude-budget trailer <msgfile>   append cost trailers (prepare-commit-msg)   [pending]
+  claude-budget trailer <msgfile> --source <s>   append cost trailers (prepare-commit-msg)
   claude-budget consume             promote the staged watermark (post-commit)  [pending]
   claude-budget price       smoke-test: load the rate card and price a sample
   claude-budget version     print version
