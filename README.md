@@ -388,3 +388,7 @@ make build-all    # cross-compile every release target into dist/
 make update-rates # re-derive cache-tier prices (requires jq)
 make clean        # remove build output
 ```
+
+## License
+
+[MIT](LICENSE) © mooracle
