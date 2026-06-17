@@ -4,7 +4,7 @@ Tracks **GitHub Claude Code** token usage per commit and appends measured-cost g
 trailers (e.g. `Claude-Cost: 0.42`) to commit messages — so every commit records
 the API-equivalent cost of the Claude Code activity that produced it.
 
-It's the Claude Code counterpart to [Copilot Budget](https://github.com/mooracle/tokentrack):
+It's the Claude Code counterpart to [Copilot Budget](https://github.com/mooracle/copilot-budget):
 same per-commit attribution idea, but sourced from Claude Code's own session
 transcripts instead of an OTel database, and shipped as a single static Go binary
 with no runtime dependencies. No daemon, no account linking, no telemetry — it
