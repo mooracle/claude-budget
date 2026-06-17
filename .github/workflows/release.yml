@@ -1,7 +1,8 @@
 name: release
 
 # Cross-target build runs on every push/PR (the GOOS/GOARCH build smoke test);
-# artifacts are published to a GitHub release only on a `v*` tag.
+# on a `v*` tag the artifacts are published to a GitHub release and the
+# Homebrew tap formula (mooracle/homebrew-tap) is regenerated and pushed.
 on:
   push:
     branches: [main]
@@ -79,3 +80,42 @@ jobs:
         with:
           files: dist/*
           generate_release_notes: true
+
+  # Regenerate the Homebrew formula in mooracle/homebrew-tap from the freshly
+  # built binaries and push it, so `brew install mooracle/tap/claude-budget`
+  # tracks each release with no manual edits. Requires a repo secret
+  # HOMEBREW_TAP_TOKEN: a PAT with contents:write on mooracle/homebrew-tap
+  # (the default GITHUB_TOKEN can't push to another repo).
+  update-tap:
+    name: bump homebrew formula
+    needs: release
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - name: check out claude-budget (for the render script)
+        uses: actions/checkout@v4
+      - name: download built binaries
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: check out the tap
+        uses: actions/checkout@v4
+        with:
+          repository: mooracle/homebrew-tap
+          token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          path: tap
+      - name: render formula
+        run: sh scripts/render-formula.sh "${{ github.ref_name }}" dist > tap/Formula/claude-budget.rb
+      - name: commit & push
+        working-directory: tap
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Formula/claude-budget.rb
+          if git diff --cached --quiet; then
+            echo "formula already up to date for ${GITHUB_REF_NAME}"
+          else
+            git commit -m "claude-budget ${GITHUB_REF_NAME#v}"
+            git push
+          fi
