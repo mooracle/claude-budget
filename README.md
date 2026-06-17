@@ -57,27 +57,58 @@ want more trailers, custom names, or an explanation of an edge case.
 ## Installation
 
 Pick whichever fits your setup. The binary is self-contained — no runtime
-dependencies.
+dependencies. After any method, verify with `claude-budget version`.
+
+**Go toolchain (any platform):**
 
 ```sh
-# Go toolchain (any platform):
 go install github.com/mooracle/claude-budget@latest
+```
 
-# Homebrew (macOS / Linux):
+Drops `claude-budget` into `$(go env GOPATH)/bin` — make sure that's on your `PATH`.
+
+**Homebrew (macOS / Linux):**
+
+```sh
 brew install mooracle/tap/claude-budget
 ```
 
-`go install` drops `claude-budget` into `$(go env GOPATH)/bin` — make sure that's
-on your `PATH`. Or grab a prebuilt binary for your OS/arch from the
-[GitHub releases](https://github.com/mooracle/claude-budget/releases) page
-(`darwin`/`linux`/`windows` × `amd64`/`arm64`), unpack it, and put `claude-budget`
-somewhere on your `PATH`.
+### From GitHub releases (prebuilt binary, no toolchain)
 
-Verify the install:
+Each [release](https://github.com/mooracle/claude-budget/releases) attaches a
+ready-to-run binary per platform, named `claude-budget-<os>-<arch>`
+(`darwin`/`linux`/`windows` × `amd64`/`arm64`; `.exe` on Windows). No Go, no
+Homebrew required.
+
+**macOS / Linux** — download the binary for your platform, mark it executable,
+and put it on your `PATH`. The `releases/latest/download/…` URL always resolves to
+the newest release:
 
 ```sh
+# Choose one: darwin-arm64 (Apple Silicon), darwin-amd64 (Intel Mac),
+#             linux-amd64, linux-arm64
+PLATFORM=darwin-arm64
+
+curl -fsSL -o claude-budget \
+  "https://github.com/mooracle/claude-budget/releases/latest/download/claude-budget-${PLATFORM}"
+chmod +x claude-budget
+sudo mv claude-budget /usr/local/bin/    # or any directory already on your PATH
+
 claude-budget version
 ```
+
+Not sure of your arch? `uname -sm` prints it (`arm64` = Apple Silicon/ARM,
+`x86_64` = `amd64`). Pin a specific version by swapping `latest/download` for
+`download/v0.1.0`.
+
+> **macOS Gatekeeper.** The binary isn't code-signed. Downloading with `curl` (as
+> above) avoids the quarantine flag; if you download via a browser instead, clear
+> it with `xattr -d com.apple.quarantine claude-budget`, or allow the binary once
+> under System Settings → Privacy & Security.
+
+**Windows** — download `claude-budget-windows-amd64.exe` (or `-arm64`) from the
+releases page, rename it to `claude-budget.exe`, and place it in a folder on your
+`PATH`. Then run `claude-budget version` in PowerShell or Command Prompt.
 
 **Prerequisite:** GitHub Claude Code, used in the repo you want to track.
 `claude-budget` reads the transcripts Claude Code writes under
