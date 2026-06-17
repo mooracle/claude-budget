@@ -37,7 +37,7 @@ var pricingData []byte
 //go:embed hooks/prepare-commit-msg hooks/post-commit
 var hookFS embed.FS
 
-const version = "0.1.0-dev"
+const version = "0.1.0"
 
 func main() {
 	if len(os.Args) < 2 {
