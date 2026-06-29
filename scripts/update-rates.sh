@@ -5,7 +5,7 @@
 # tokentrack's Copilot YAML), so the refresh procedure is deliberately manual at
 # the base-price step and automated only for the derived cache tiers:
 #
-#   1. Open https://platform.claude.com/docs/en/pricing.md
+#   1. Open https://platform.claude.com/docs/en/about-claude/pricing
 #   2. In data/claude-pricing.json, update each model's base `input` and `output`
 #      (per-MTok, USD) and bump the top-level `version` to today's date.
 #   3. Run `make update-rates` (this script) to re-derive the three cache tiers

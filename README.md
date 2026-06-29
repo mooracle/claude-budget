@@ -10,12 +10,9 @@ transcripts instead of an OTel database, and shipped as a single static Go binar
 with no runtime dependencies. No daemon, no account linking, no telemetry — it
 reads the transcripts Claude Code already writes on your machine.
 
-> Status: **complete.** `setup` / `status` / `uninstall` and the full
-> `trailer` / `consume` write path are live: a `git commit` now appends the
-> configured trailers and advances the per-branch watermark. Pricing, the
-> transcript reader, git/hook/state plumbing, `.claude-budget.toml` parsing, the
-> unit suite, and a real-`git` e2e suite are all implemented and green
-> (`go test ./...`). The implementation plan is archived under
+> **Stable and ready to use.** Everything works end to end: `setup`, `status`,
+> and `uninstall`, plus the automatic trailer path that attaches a cost trailer
+> on every `git commit`. The original implementation plan is archived under
 > [docs/plans/completed/](docs/plans/completed/).
 
 ## Contents
@@ -33,11 +30,12 @@ reads the transcripts Claude Code already writes on your machine.
 - [FAQ & troubleshooting](#faq--troubleshooting)
 - [Pricing](#pricing)
 - [Building from source](#building-from-source)
+- [License](#license)
 
 ## Quickstart
 
 ```sh
-# 1. Install (Go toolchain on any platform)
+# 1. Install (Go shown here; Homebrew & prebuilt binaries under Installation below)
 go install github.com/mooracle/claude-budget@latest
 
 # 2. In a git repo where you use Claude Code:
@@ -189,7 +187,7 @@ no trailer block — that's expected, not a bug.
 
 ### Command reference
 
-There are four commands you run by hand:
+There are five commands you run by hand:
 
 | Command | What it does |
 |---------|--------------|
@@ -364,7 +362,7 @@ mispriced.
 byte-for-byte, so the base prices are edited by hand and the cache tiers are
 re-derived:
 
-1. Open `platform.claude.com/docs/en/pricing.md`.
+1. Open the [Anthropic pricing docs](https://platform.claude.com/docs/en/about-claude/pricing).
 2. Update each model's base `input` / `output` in `data/claude-pricing.json` and
    bump the top-level `version` to today's date.
 3. `make update-rates` (requires [`jq`](https://jqlang.github.io/jq/)) —
