@@ -272,6 +272,38 @@ func TestScan_CwdMembershipIncludingSubdir(t *testing.T) {
 	}
 }
 
+func TestScan_CountsNestedSubagentAndWorkflowTranscripts(t *testing.T) {
+	projects := t.TempDir()
+	repo := t.TempDir()
+
+	// Main-agent session file at the top level.
+	writeJSONL(t, projects, "proj", "session.jsonl",
+		[]string{recJSON(ts1, repo, "main", "main-req", "main-id", "claude-opus-4-8", 100, 50)}, time.Time{})
+	// Subagent turn (Task tool): <session>/subagents/agent-*.jsonl.
+	writeJSONL(t, projects, filepath.Join("proj", "session", "subagents"), "agent-x.jsonl",
+		[]string{recJSON(ts2, repo, "main", "sub-req", "sub-id", "claude-opus-4-8", 200, 20)}, time.Time{})
+	// Workflow-agent turn: <session>/subagents/workflows/wf_*/agent-*.jsonl.
+	writeJSONL(t, projects, filepath.Join("proj", "session", "subagents", "workflows", "wf_abc"), "agent-y.jsonl",
+		[]string{recJSON(ts3, repo, "main", "wf-req", "wf-id", "claude-opus-4-8", 300, 30)}, time.Time{})
+	// A non-.jsonl sibling that also mentions usage must be ignored.
+	writeJSONL(t, projects, filepath.Join("proj", "session", "workflows"), "wf_abc.json",
+		[]string{`{"usage":{"output_tokens":99999}}`}, time.Time{})
+
+	res, err := Scan(projects, repo, "main", 0, testCard())
+	if err != nil {
+		t.Fatalf("Scan: %v", err)
+	}
+	if res.Requests != 3 {
+		t.Fatalf("requests = %d, want 3 (main + subagent + workflow agent)", res.Requests)
+	}
+	if res.TotalTokens != 700 { // 150 + 220 + 330
+		t.Errorf("tokens = %d, want 700 (nested subagent/workflow usage included)", res.TotalTokens)
+	}
+	if res.MaxRequestID != "wf-req" {
+		t.Errorf("MaxRequestID = %q, want wf-req (latest, in the deepest nested file)", res.MaxRequestID)
+	}
+}
+
 func TestScan_MtimePrunesWholeFile(t *testing.T) {
 	projects := t.TempDir()
 	repo := t.TempDir()
