@@ -1,11 +1,18 @@
 {
-  "version": "2026-06-21",
+  "version": "2026-07-20",
   "currency": "usd",
   "unit": "per_mtok",
   "source": "https://platform.claude.com/docs/en/about-claude/pricing",
   "note": "Base input/output are Anthropic list prices. cacheRead = 0.1x input, cacheWrite5m = 1.25x input, cacheWrite1h = 2x input (standard Anthropic cache multipliers). Refresh with `make update-rates` and commit the diff.",
   "models": {
     "claude-fable-5": {
+      "input": 10.0,
+      "output": 50.0,
+      "cacheRead": 1,
+      "cacheWrite5m": 12.5,
+      "cacheWrite1h": 20
+    },
+    "claude-mythos-5": {
       "input": 10.0,
       "output": 50.0,
       "cacheRead": 1,
@@ -53,6 +60,13 @@
       "cacheRead": 1.5,
       "cacheWrite5m": 18.75,
       "cacheWrite1h": 30
+    },
+    "claude-sonnet-5": {
+      "input": 3.0,
+      "output": 15.0,
+      "cacheRead": 0.3,
+      "cacheWrite5m": 3.75,
+      "cacheWrite1h": 6
     },
     "claude-sonnet-4-6": {
       "input": 3.0,

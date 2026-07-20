@@ -1,10 +1,19 @@
 // Package reader scans Claude Code session transcripts and aggregates the
 // not-yet-consumed token usage for the current repo and branch.
 //
-// Pipeline: enumerate ~/.claude/projects/* → per-file mtime prune → repo
-// membership via the cwd field → scan survivors → keep gitBranch==branch AND
-// timestamp>hwm → dedup by requestId (streaming partials share an id) → sum the
-// five token buckets per model and price.
+// Pipeline: enumerate ~/.claude/projects/* → repo membership via the cwd field →
+// collect every transcript under the project dir at any depth (main session files
+// plus nested subagent and workflow-agent turns) → per-file mtime prune → scan
+// survivors → keep gitBranch==branch AND timestamp>hwm → dedup by requestId
+// (streaming partials share an id) → sum the five token buckets per model and
+// price.
+//
+// Recursion matters: Claude Code writes subagent turns (the Task tool) to
+// <session>/subagents/agent-*.jsonl and workflow-agent turns to
+// <session>/subagents/workflows/wf_*/agent-*.jsonl, not the top level. Those
+// records carry the same cwd, gitBranch, requestId, and usage as the main agent,
+// so a workflow-heavy repo whose subagents do most of the work would otherwise
+// undercount its cost several-fold.
 package reader
 
 import (
@@ -12,6 +21,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"sort"
@@ -99,26 +109,16 @@ func Scan(projectsDir, repoRoot, branch string, hwmMs int64, rc *pricing.RateCar
 			continue
 		}
 		dirPath := filepath.Join(projectsDir, d.Name())
-		entries, _ := os.ReadDir(dirPath)
-		var survivors []string
-		for _, f := range entries {
-			if f.IsDir() || !strings.HasSuffix(f.Name(), ".jsonl") {
-				continue
-			}
-			if hwmMs > 0 {
-				if info, err := f.Info(); err == nil && info.ModTime().UnixMilli() <= hwmMs {
-					continue // prune: every record in this file predates the baseline
-				}
-			}
-			survivors = append(survivors, filepath.Join(dirPath, f.Name()))
-		}
-		if len(survivors) == 0 {
+		// Decide repo membership from the cheap top-level session files first, so an
+		// unrelated project is rejected without walking its (possibly large) nested
+		// subagent/workflow tree. All transcripts under one encoded project dir share
+		// the same cwd, so the top level is a sufficient probe.
+		if !underRepo(firstCwd(topLevelJSONL(dirPath)), repoRoot) {
 			continue
 		}
-		if !underRepo(firstCwd(survivors), repoRoot) {
-			continue
-		}
-		for _, fp := range survivors {
+		// Under this repo: scan every transcript at any depth (main session files
+		// plus nested subagent/workflow-agent turns), mtime-pruned against the hwm.
+		for _, fp := range collectTranscripts(dirPath, hwmMs) {
 			scanFile(fp, branch, hwmMs, best)
 		}
 	}
@@ -162,6 +162,48 @@ func Scan(projectsDir, repoRoot, branch string, hwmMs int64, rc *pricing.RateCar
 		return res.Models[i].Model < res.Models[j].Model
 	})
 	return res, nil
+}
+
+// topLevelJSONL returns the .jsonl files directly under dirPath (no recursion) —
+// the main-agent session transcripts. It probes repo membership cheaply, before
+// deciding whether the full nested tree is worth walking.
+func topLevelJSONL(dirPath string) []string {
+	entries, _ := os.ReadDir(dirPath)
+	var out []string
+	for _, f := range entries {
+		if f.IsDir() || !strings.HasSuffix(f.Name(), ".jsonl") {
+			continue
+		}
+		out = append(out, filepath.Join(dirPath, f.Name()))
+	}
+	return out
+}
+
+// collectTranscripts returns every .jsonl transcript under dirPath at any depth,
+// mtime-pruned against hwmMs. Recursion is what captures subagent and
+// workflow-agent usage: Claude Code writes those turns under <session>/subagents/
+// and <session>/subagents/workflows/wf_*/, not the top level. Non-.jsonl siblings
+// (tool-results/*.txt, workflows/*.json, *.meta.json) are skipped by the suffix
+// test. The mtime prune stays per-file so a workflow-heavy tree of thousands of
+// old agent files is stat-ed but not reopened once its window has been consumed.
+func collectTranscripts(dirPath string, hwmMs int64) []string {
+	var out []string
+	filepath.WalkDir(dirPath, func(p string, e fs.DirEntry, err error) error {
+		if err != nil {
+			return nil // unreadable entry: skip it, keep walking siblings
+		}
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".jsonl") {
+			return nil
+		}
+		if hwmMs > 0 {
+			if info, err := e.Info(); err == nil && info.ModTime().UnixMilli() <= hwmMs {
+				return nil // prune: every record in this file predates the baseline
+			}
+		}
+		out = append(out, p)
+		return nil
+	})
+	return out
 }
 
 func scanFile(path, branch string, hwmMs int64, best map[string]dedupEntry) {
