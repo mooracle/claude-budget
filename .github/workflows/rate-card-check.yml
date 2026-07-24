@@ -86,7 +86,10 @@ jobs:
           Prices pulled from the Anthropic pricing docs by
           .github/workflows/rate-card-check.yml. If a newly added model is now
           its family's current generation, repoint \`fallbacks\` at it."
-          git push origin HEAD:main
+          # Push back to whichever ref triggered this run, not a hardcoded main:
+          # on the schedule that is main, and a workflow_dispatch on a branch
+          # then stays on that branch instead of silently writing to main.
+          git push origin "HEAD:${GITHUB_REF_NAME}"
 
       # Anything the models API lists that the card still lacks — the docs table
       # trailing a launch. Fallback estimation covers users meanwhile.
