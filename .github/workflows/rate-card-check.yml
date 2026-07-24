@@ -1,0 +1,159 @@
+name: rate-card sync
+
+# Weekly: pull current prices from Anthropic, compare against the embedded card,
+# and commit if they differ — which trips rate-card-release.yml, bumping the
+# last version digit and publishing a rebuilt binary.
+#
+#   fetch (docs table) -> compare -> commit -> bump patch -> tag -> release
+#
+# There is no pricing API to read instead: GET /v1/models returns ids and
+# capabilities but no rates, and claude.com/pricing.json is a CMS page dump whose
+# " / MTok" strings are text nodes disconnected from any model name. The docs
+# markdown table is the only machine-readable source, so scripts/fetch-rates.sh
+# parses it behind validation that aborts on a misparse rather than writing bad
+# rates (see the header comment there).
+#
+# The models API is still worth querying for what it *is* authoritative about:
+# which model ids exist. Anything the API lists that the card still lacks after a
+# sync gets an issue, since that means the docs table hasn't caught up yet.
+on:
+  schedule:
+    - cron: '0 7 * * 1' # Mondays, 07:00 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  issues: write
+
+concurrency:
+  group: rate-card-sync
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    name: refresh prices and rebuild if they changed
+    runs-on: ubuntu-latest
+    steps:
+      # A commit pushed with the default GITHUB_TOKEN does not trigger other
+      # workflows, so the release chain would stall here. RELEASE_PAT (a
+      # fine-grained PAT with contents:write) restores it; without one the sync
+      # still commits, and the release must be kicked off by hand.
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.RELEASE_PAT || secrets.GITHUB_TOKEN }}
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Fetch current rates
+        run: ./scripts/fetch-rates.sh
+
+      - name: Did the card change?
+        id: card
+        run: |
+          set -euo pipefail
+          if git diff --quiet -- data/claude-pricing.json; then
+            echo "rates unchanged"
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            git --no-pager diff --stat -- data/claude-pricing.json
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      # Rates are about to ship into permanent commit trailers, so the card is
+      # validated before it lands: positive rates, every model priceable, every
+      # fallbacks target present.
+      - name: Test
+        if: steps.card.outputs.changed == 'true'
+        run: |
+          go vet ./...
+          go test ./...
+
+      - name: Commit the refreshed card
+        if: steps.card.outputs.changed == 'true'
+        run: |
+          set -euo pipefail
+          if [ -z "${{ secrets.RELEASE_PAT }}" ]; then
+            echo "::warning::RELEASE_PAT unset — the commit will not trigger \
+          rate-card-release.yml; run that workflow manually to publish."
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add data/claude-pricing.json
+          git commit -m "chore: refresh rate card ($(jq -r .version data/claude-pricing.json))
+
+          Prices pulled from the Anthropic pricing docs by
+          .github/workflows/rate-card-check.yml. If a newly added model is now
+          its family's current generation, repoint \`fallbacks\` at it."
+          git push origin HEAD:main
+
+      # Anything the models API lists that the card still lacks — the docs table
+      # trailing a launch. Fallback estimation covers users meanwhile.
+      - name: Report models the sync could not price
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -z "${ANTHROPIC_API_KEY:-}" ]; then
+            echo "::warning::ANTHROPIC_API_KEY not set — skipping the new-model check"
+            exit 0
+          fi
+
+          # Normalize ids the way the binary does (internal/pricing.Normalize):
+          # lowercase, drop a trailing dated snapshot.
+          live=$(mktemp); after=""; page=0
+          while [ "$page" -lt 10 ]; do
+            resp=$(curl -fsS --retry 3 --retry-delay 5 \
+              "https://api.anthropic.com/v1/models?limit=100${after}" \
+              -H "x-api-key: ${ANTHROPIC_API_KEY}" \
+              -H "anthropic-version: 2023-06-01")
+            jq -r '.data[].id | ascii_downcase | sub("-[0-9]{8}$"; "")' <<<"$resp" >> "$live"
+            [ "$(jq -r '.has_more' <<<"$resp")" = "true" ] || break
+            after="&after_id=$(jq -r '.last_id' <<<"$resp")"
+            page=$((page + 1))
+          done
+          sort -u -o "$live" "$live"
+
+          carded=$(mktemp)
+          jq -r '.models | keys[] | ascii_downcase' data/claude-pricing.json | sort -u > "$carded"
+          missing=$(comm -23 "$live" "$carded" | paste -sd' ' -)
+          echo "missing after sync: ${missing:-<none>}"
+          [ -z "$missing" ] && exit 0
+
+          title="rate card: unpriced model(s) — ${missing}"
+          if gh issue list --state open --label rate-card --json title --jq '.[].title' \
+               | grep -qxF "$title"; then
+            echo "issue already open: $title"
+            exit 0
+          fi
+
+          # Quoted delimiter: nothing here is expanded by the shell, so backticks
+          # and $0.00 need no escaping. The heredoc writes to a file rather than
+          # into $(...), which bash 3.2 cannot parse when the body has quotes.
+          raw=$(mktemp)
+          cat <<'TEMPLATE' > "$raw"
+          The models API lists model(s) that `data/claude-pricing.json` does not price,
+          and the [pricing docs](https://platform.claude.com/docs/en/about-claude/pricing)
+          table does not carry them yet either — so the weekly sync could not fill them in:
+
+          ```
+          __MISSING__
+          ```
+
+          Usage on these is **estimated** from the `fallbacks` table rather than counted
+          as $0.00, so totals are approximate, not missing. `claude-budget status` marks
+          them `← est. via <model>`.
+
+          Once the docs table lists them the next sync picks them up automatically. To do
+          it now: add them to `models`, repoint their family in `fallbacks` if they are
+          the current generation, run `make update-rates`, then `go test ./...`.
+
+          _Opened automatically by `.github/workflows/rate-card-check.yml`._
+          TEMPLATE
+
+          template=$(<"$raw")
+          body=$(mktemp)
+          printf '%s\n' "${template//__MISSING__/$missing}" > "$body"
+          gh issue create --title "$title" --label rate-card --body-file "$body"

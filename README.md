@@ -164,6 +164,21 @@ claude-budget — /path/to/repo @ branch "main"
 The last lines echo your active configuration and whether the hooks are installed
 — handy for confirming a `.claude-budget.toml` edit parsed as intended.
 
+A model released after your binary was built has no rate of its own, so its cost
+is *estimated* from the current generation of its family and flagged here:
+
+```
+  model                      cost         tokens   reqs
+  claude-opus-6             $2.10          61200     12   ← est. via claude-opus-5
+  claude-haiku-4-5          $0.01           2443      3
+
+  ! 1 model(s) newer than the rate card — cost is an estimate.
+    Upgrade claude-budget for exact rates (card version 2026-07-24).
+```
+
+Only `status` says this. Commit trailers stay a plain number so downstream
+parsers keep working — see [Pricing](#pricing) for why estimating beats `$0.00`.
+
 ### 3. Commit as usual
 
 ```sh
@@ -346,30 +361,94 @@ only the `claude-budget` hooks; other hooks, your committed trailers, and your
 `.claude-budget.toml` are left in place. To stop tracking everywhere, run it in
 each clone.
 
-**A model shows as "unpriced" / costs `$0.00`.** The embedded rate card doesn't
-recognize that model name yet (usually because it's newer than the binary). Update
-to a newer release, or refresh `data/claude-pricing.json` (see [Pricing](#pricing)).
-Unknown models are priced at `0` rather than guessed.
+**`status` says a model's cost is `← est. via <model>`.** That model is newer
+than your binary's rate card, so its cost is estimated from its family's current
+generation. The estimate is close whenever a release holds its tier's price, but
+upgrade for exact rates (or refresh the card — see [Pricing](#pricing)).
+
+**A model shows as `(unpriced)` / costs `$0.00`.** Only possible if the rate card
+has no `fallbacks` table at all; a stock build always estimates. Upgrade, or
+refresh `data/claude-pricing.json`.
 
 ## Pricing
 
 `data/claude-pricing.json` is the checked-in rate card (Anthropic list prices;
 cache tiers via the standard 0.1× / 1.25× / 2× multipliers), embedded into the
-binary and parsed at runtime. Unknown models price to `0` rather than being
-mispriced.
+binary and parsed at runtime.
 
-**Refreshing the rate card.** There's no machine-readable upstream to mirror
-byte-for-byte, so the base prices are edited by hand and the cache tiers are
-re-derived:
+**Models newer than the card are estimated, not free.** Anthropic ships models
+faster than this project cuts releases, and a released model priced at `0`
+silently understates a commit — permanently, once it's in a commit message. So a
+model with no entry of its own borrows a rate via the card's `fallbacks` table:
+the longest matching family prefix wins, and `""` is the default for a family the
+card has never seen.
 
-1. Open the [Anthropic pricing docs](https://platform.claude.com/docs/en/about-claude/pricing).
-2. Update each model's base `input` / `output` in `data/claude-pricing.json` and
-   bump the top-level `version` to today's date.
-3. `make update-rates` (requires [`jq`](https://jqlang.github.io/jq/)) —
-   recomputes `cacheRead` / `cacheWrite5m` / `cacheWrite1h` from `input` via the
-   0.1× / 1.25× / 2× multipliers, preserving everything else.
-4. `go test ./...` and commit the diff (the analog of Copilot Budget's
-   `npm run update-rates`).
+```json
+"fallbacks": {
+  "claude-opus": "claude-opus-5",
+  "claude-sonnet": "claude-sonnet-5",
+  "": "claude-fable-5"
+}
+```
+
+An over-estimate is the safer error for a budget tool — it can never leave you
+believing you spent less than you did. Point each family at its **current
+generation, not its most expensive member**: Opus list prices fell 3× between 4.1
+and 4.5, so the newest sibling predicts a new release far better than the priciest
+one. Estimates are disclosed in `claude-budget status` only; commit trailers stay
+a plain number so downstream parsers keep working.
+
+**Refreshing the rate card.** Normally you don't — a
+[weekly workflow](.github/workflows/rate-card-check.yml) does it:
+
+```
+fetch prices → compare → commit → bump patch version → tag → build & publish
+```
+
+To run the fetch by hand (requires [`jq`](https://jqlang.github.io/jq/)):
+
+```sh
+make fetch-rates                  # pull current prices, re-derive cache tiers
+./scripts/fetch-rates.sh --dry-run  # show what would change, write nothing
+```
+
+**There is no pricing API.** `GET /v1/models` is authoritative for which model
+ids exist but returns no rates — only ids, capabilities, and token limits — and
+`claude.com/pricing.json` is a CMS page dump whose `" / MTok"` strings are text
+nodes disconnected from any model name. The only machine-readable source is the
+[pricing docs](https://platform.claude.com/docs/en/about-claude/pricing) table,
+so `fetch-rates.sh` parses that. Parsing a human-facing page is brittle, so
+nothing is written unless the scrape passes validation — most importantly, the
+table lists the cache tiers *explicitly*, and they must equal `input` × 0.1 /
+1.25 / 2. That redundancy makes it a real column-alignment check: if the docs
+gain, lose, or reorder a column the arithmetic stops matching and the run aborts
+rather than writing bad rates into permanent commit trailers. Models on the page
+twice (Claude Sonnet 5 carries an introductory price) resolve to the higher —
+list — rate, matching the card's convention.
+
+Hand-editing still works if you'd rather: change `input` / `output`, bump
+`version`, `make update-rates` to re-derive the cache tiers, `go test ./...`.
+Either way, **if a new model is now its family's current generation, repoint that
+family in `fallbacks`** (e.g. `"claude-opus": "claude-opus-6"`) — that isn't
+inferred. The tests fail if a `fallbacks` entry names a model the card lacks.
+
+Anything the models API lists that the docs table hasn't caught up on yet gets an
+issue opened, and fallback estimation covers users until it lands.
+
+> **One-time setup for the automated chain:** a commit pushed with the default
+> `GITHUB_TOKEN` does not trigger other workflows, so add a fine-grained PAT with
+> `contents: write` as the `RELEASE_PAT` secret, plus `ANTHROPIC_API_KEY` for the
+> new-model check. Without `RELEASE_PAT` the sync still commits, but the release
+> must be started by hand.
+
+Merging that to `main` is the whole release: because the card is embedded at
+build time, new prices only reach users through a new binary, so
+[`rate-card-release.yml`](.github/workflows/rate-card-release.yml) watches
+`data/claude-pricing.json`, and when its `version` changes it runs the tests,
+bumps the patch version in `main.go`, and pushes a `v*` tag —
+[`release.yml`](.github/workflows/release.yml) then builds every target and
+updates the Homebrew tap. Editing the card *without* bumping `version` (a note
+tweak, a re-derive) releases nothing.
 
 ## Building from source
 

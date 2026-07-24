@@ -35,6 +35,12 @@ type RateCard struct {
 	Currency string          `json:"currency"`
 	Unit     string          `json:"unit"`
 	Models   map[string]Rate `json:"models"`
+	// Fallbacks maps a model-family prefix ("claude-opus") to the rate-card key
+	// whose price stands in for an unlisted member of that family, with the ""
+	// key as the last-resort default for an unrecognized family. It exists so a
+	// model released after this binary was built is estimated rather than
+	// counted as free — see Priced.
+	Fallbacks map[string]string `json:"fallbacks"`
 }
 
 // Usage is one request's disjoint token buckets, as recorded by Claude Code.
@@ -62,8 +68,8 @@ func Load(data []byte) (*RateCard, error) {
 // priced model: a context-window tag ("claude-opus-4-8[1m]") and a dated snapshot
 // ("claude-haiku-4-5-20251001"). Both appear verbatim in real Claude Code
 // transcripts, and without this they miss the bare rate-card key and price to 0.
-// This is alias normalization, not a family fallback — an otherwise-unknown id
-// still stays unknown (and prices to 0) rather than borrowing a sibling's rate.
+// This is alias normalization only: it resolves ids that name a model already in
+// the card. Pricing an id the card has never heard of is Priced's job.
 func Normalize(model string) string {
 	m := strings.ToLower(strings.TrimSpace(ctrlStripper.Replace(model)))
 	for _, p := range []string{"claude-code/", "anthropic/", "us.anthropic."} {
@@ -76,13 +82,48 @@ func Normalize(model string) string {
 	return m
 }
 
-// CostUSD returns the dollar cost of one request's usage. Unknown model → 0,
-// to avoid silently mispricing models the rate card hasn't been updated for.
-func (rc *RateCard) CostUSD(model string, u Usage) float64 {
-	r, ok := rc.Models[Normalize(model)]
-	if !ok {
-		return 0
+// Priced resolves a model to a rate. source is the rate-card key the price came
+// from, and exact reports whether that was a direct hit.
+//
+// A model with no entry of its own is *estimated* rather than treated as free:
+// the longest matching family prefix in Fallbacks wins, and the "" key is the
+// last-resort default for a family the card has never seen. Anthropic ships new
+// models faster than this binary is released, and a released model priced at 0
+// silently understates a commit's cost — an over-estimate is the safer error for
+// a budget tool, because it can never leave you believing you spent less than
+// you did. Callers that need to disclose the guess use source and exact; see
+// runStatus. Which key stands in for a family is data, not inference: the same
+// human who adds a price also updates the fallbacks table.
+//
+// Estimation is opt-in per card. With no Fallbacks configured, an unknown model
+// resolves to no rate and prices to 0, the behavior before fallbacks existed.
+// An empty model id is corrupt input rather than a new release, so it never
+// borrows a rate.
+func (rc *RateCard) Priced(model string) (r Rate, source string, exact bool) {
+	m := Normalize(model)
+	if r, ok := rc.Models[m]; ok {
+		return r, m, true
 	}
+	if m == "" {
+		return Rate{}, "", false
+	}
+	best := "" // "" doubles as "no family matched" and as the default key
+	for fam := range rc.Fallbacks {
+		if fam != "" && len(fam) > len(best) && strings.HasPrefix(m, fam+"-") {
+			best = fam
+		}
+	}
+	key := rc.Fallbacks[best]
+	if r, ok := rc.Models[key]; ok {
+		return r, key, false
+	}
+	return Rate{}, "", false
+}
+
+// CostUSD returns the dollar cost of one request's usage, estimating via
+// Priced when the model has no rate of its own.
+func (rc *RateCard) CostUSD(model string, u Usage) float64 {
+	r, _, _ := rc.Priced(model)
 	return (float64(u.Input)*r.Input +
 		float64(u.Output)*r.Output +
 		float64(u.CacheRead)*r.CacheRead +
@@ -90,7 +131,9 @@ func (rc *RateCard) CostUSD(model string, u Usage) float64 {
 		float64(u.CacheWrite1h)*r.CacheWrite1h) / 1e6
 }
 
-// Known reports whether the rate card prices this model.
+// Known reports whether the card carries a rate for this model itself. It is
+// deliberately not satisfied by a Fallbacks estimate — callers use it to tell a
+// quoted price from a guessed one.
 func (rc *RateCard) Known(model string) bool {
 	_, ok := rc.Models[Normalize(model)]
 	return ok

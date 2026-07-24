@@ -1,9 +1,18 @@
 {
-  "version": "2026-07-20",
+  "version": "2026-07-24",
   "currency": "usd",
   "unit": "per_mtok",
   "source": "https://platform.claude.com/docs/en/about-claude/pricing",
   "note": "Base input/output are Anthropic list prices. cacheRead = 0.1x input, cacheWrite5m = 1.25x input, cacheWrite1h = 2x input (standard Anthropic cache multipliers). Refresh with `make update-rates` and commit the diff.",
+  "fallbacksNote": "Stand-in rates for models newer than this card, so a fresh release is estimated instead of counted as free. Key = model-family prefix, value = the rate-card key to borrow; \"\" is the default for an unrecognized family. Point each family at its CURRENT generation, not its most expensive member — Opus list prices fell 3x from 4.1 to 4.5, so the newest sibling predicts a new release far better than the priciest one. When adding a model above, repoint its family here too.",
+  "fallbacks": {
+    "claude-opus": "claude-opus-5",
+    "claude-sonnet": "claude-sonnet-5",
+    "claude-haiku": "claude-haiku-4-5",
+    "claude-fable": "claude-fable-5",
+    "claude-mythos": "claude-mythos-5",
+    "": "claude-fable-5"
+  },
   "models": {
     "claude-fable-5": {
       "input": 10.0,
@@ -18,6 +27,13 @@
       "cacheRead": 1,
       "cacheWrite5m": 12.5,
       "cacheWrite1h": 20
+    },
+    "claude-opus-5": {
+      "input": 5.0,
+      "output": 25.0,
+      "cacheRead": 0.5,
+      "cacheWrite5m": 6.25,
+      "cacheWrite1h": 10
     },
     "claude-opus-4-8": {
       "input": 5.0,
@@ -95,6 +111,13 @@
       "cacheRead": 0.1,
       "cacheWrite5m": 1.25,
       "cacheWrite1h": 2
+    },
+    "claude-haiku-3-5": {
+      "input": 0.8,
+      "output": 4.0,
+      "cacheRead": 0.08,
+      "cacheWrite5m": 1,
+      "cacheWrite1h": 1.6
     }
   }
 }

@@ -1,0 +1,138 @@
+name: rate-card release
+
+# The rate card is embedded at build time (`go:embed data/claude-pricing.json`),
+# so new prices only reach users through a new binary. This closes that gap:
+# when the card lands on main with a bumped `version`, cut a patch release and
+# let release.yml build and publish it — no hand-cut release for a price change.
+#
+# data/claude-pricing.json is the single trigger file. The version-bump commit
+# this job pushes touches main.go only, so the path filter keeps it from
+# re-triggering itself.
+on:
+  push:
+    branches: [main]
+    paths: ['data/claude-pricing.json']
+  workflow_dispatch: # re-run if a release was missed
+
+permissions:
+  contents: write
+
+concurrency:
+  group: rate-card-release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: tag a patch release for the new card
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2 # need the previous commit to diff the card version
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Decide whether the card version actually changed
+        id: card
+        run: |
+          set -euo pipefail
+          new=$(jq -r '.version' data/claude-pricing.json)
+          # Missing on the first commit, or when the file is newly added.
+          old=$(git show HEAD^:data/claude-pricing.json 2>/dev/null | jq -r '.version' || echo "")
+          echo "card version: ${old:-<none>} -> ${new}"
+          if [ "$new" = "$old" ]; then
+            # The card changed but its version did not — a note tweak, a
+            # re-derive, a typo fix. Nothing users need a new binary for.
+            echo "card version unchanged; no release"
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      # A model dropped from the card doesn't fail anything — it silently
+      # downgrades that model's real usage to a fallback estimate, and every
+      # trailer written afterwards is quietly wrong. So a removal has to be
+      # stated explicitly: put [drop-models] in the commit message to retire one.
+      - name: Guard against removed models
+        if: steps.card.outputs.changed == 'true'
+        run: |
+          set -euo pipefail
+          if ! git show HEAD^:data/claude-pricing.json > /tmp/old-card.json 2>/dev/null; then
+            echo "no previous card to compare against"
+            exit 0
+          fi
+          lost=$(jq -rn --slurpfile old /tmp/old-card.json --slurpfile new data/claude-pricing.json '
+            ($old[0].models | keys) - ($new[0].models | keys) | .[]')
+          if [ -z "$lost" ]; then
+            echo "no models removed"
+            exit 0
+          fi
+          if git log -1 --format='%B' | grep -qF '[drop-models]'; then
+            echo "::warning::intentionally retiring: $(tr '\n' ' ' <<<"$lost")"
+            exit 0
+          fi
+          echo "::error::this change removes model(s) from the rate card:" >&2
+          while IFS= read -r m; do echo "  - $m" >&2; done <<<"$lost"
+          echo "Their usage would silently fall back to an estimate. If this is" >&2
+          echo "deliberate, put [drop-models] in the commit message." >&2
+          exit 1
+
+      # Guards the embedded data before it ships: rates positive, every model
+      # priceable, and every `fallbacks` target present in the card.
+      - name: Test
+        if: steps.card.outputs.changed == 'true'
+        run: |
+          go vet ./...
+          go test ./...
+
+      - name: Bump patch version, tag, and push
+        if: steps.card.outputs.changed == 'true'
+        run: |
+          set -euo pipefail
+          cur=$(sed -n 's/^const version = "\(.*\)"$/\1/p' main.go)
+          if [ -z "$cur" ]; then
+            echo "::error::could not read the version const from main.go"
+            exit 1
+          fi
+          IFS=. read -r maj min patch <<<"$cur"
+          new="${maj}.${min}.$((patch + 1))"
+          echo "binary version: ${cur} -> ${new}"
+
+          # [no-release] exercises everything up to here — the trigger, the
+          # card-version diff, the removed-models guard, the tests, and the
+          # version arithmetic — without cutting a tag. For verifying the
+          # pipeline on a card change that should not ship a binary.
+          if git log -1 --format='%B' | grep -qF '[no-release]'; then
+            echo "::notice::[no-release] — would tag v${new}; stopping before commit/tag/push"
+            exit 0
+          fi
+
+          if git rev-parse -q --verify "refs/tags/v${new}" >/dev/null; then
+            echo "::error::tag v${new} already exists — bump main.go manually"
+            exit 1
+          fi
+
+          # Write via a temp file rather than `sed -i`, whose in-place flag
+          # differs between GNU and BSD — this form is identical on both, so the
+          # release path can be exercised outside CI.
+          tmp=$(mktemp)
+          sed "s/^const version = \".*\"\$/const version = \"${new}\"/" main.go > "$tmp"
+          mv "$tmp" main.go
+          grep -qF "const version = \"${new}\"" main.go # the rewrite actually landed
+          go build ./... # the bumped file must still compile
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add main.go
+          git commit -m "release: v${new}
+
+          Rate card $(jq -r '.version' data/claude-pricing.json). Released
+          automatically by .github/workflows/rate-card-release.yml."
+          git tag "v${new}"
+          # Push the commit first: if the tag landed alone and the push then
+          # failed, release.yml would build a binary whose embedded version
+          # const disagrees with its own tag.
+          git push origin HEAD:main
+          git push origin "v${new}"

@@ -4,6 +4,7 @@
 #   make test         go test ./...
 #   make vet          go vet ./...
 #   make check        vet + build + test gate (the plan's build/vet gate)
+#   make fetch-rates  pull current prices from Anthropic into the rate card
 #   make update-rates re-derive cache tiers in data/claude-pricing.json
 #   make build-all    cross-compile every release target into dist/
 #   make clean        remove build output
@@ -13,7 +14,7 @@ DIST      := dist
 # darwin/linux/windows x amd64/arm64 — kept in sync with .github/workflows/release.yml.
 PLATFORMS := darwin/amd64 darwin/arm64 linux/amd64 linux/arm64 windows/amd64 windows/arm64
 
-.PHONY: all build test vet check update-rates build-all clean
+.PHONY: all build test vet check fetch-rates update-rates build-all clean
 
 all: check build
 
@@ -30,6 +31,9 @@ vet:
 check: vet
 	go build ./...
 	go test ./...
+
+fetch-rates:
+	./scripts/fetch-rates.sh
 
 update-rates:
 	./scripts/update-rates.sh

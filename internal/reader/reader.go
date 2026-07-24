@@ -62,6 +62,11 @@ type ModelStat struct {
 	Requests int
 	Tokens   int64
 	CostUSD  float64
+	// PricedAs names the rate-card key CostUSD was estimated from when the model
+	// has no rate of its own, and is empty for an exact hit (or when nothing
+	// priced it at all). Only `status` surfaces this; trailers stay a plain
+	// number so downstream parsers keep working.
+	PricedAs string
 }
 
 // Result is the aggregate the reader returns.
@@ -144,6 +149,9 @@ func Scan(projectsDir, repoRoot, branch string, hwmMs int64, rc *pricing.RateCar
 	}
 	for _, ms := range models {
 		ms.CostUSD = rc.CostUSD(ms.Model, ms.Usage)
+		if _, src, exact := rc.Priced(ms.Model); !exact {
+			ms.PricedAs = src
+		}
 		ms.Tokens = ms.Usage.Input + ms.Usage.Output + ms.Usage.CacheRead + ms.Usage.CacheWrite5m + ms.Usage.CacheWrite1h
 		res.Models = append(res.Models, *ms)
 		res.TotalCostUSD += ms.CostUSD

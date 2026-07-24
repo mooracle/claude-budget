@@ -134,6 +134,81 @@ func TestKnown(t *testing.T) {
 	}
 }
 
+// fallbackCard extends testCard with a families table, so an unlisted model is
+// estimated rather than priced to 0.
+func fallbackCard() *RateCard {
+	rc := testCard()
+	rc.Models["claude-haiku-4-5"] = Rate{Input: 1, Output: 2}
+	rc.Models["claude-fable-5"] = Rate{Input: 10, Output: 20}
+	rc.Fallbacks = map[string]string{
+		"claude-opus":  "claude-opus-4-8",
+		"claude-haiku": "claude-haiku-4-5",
+		"":             "claude-fable-5",
+	}
+	return rc
+}
+
+func TestPriced_ExactHitBeatsFallback(t *testing.T) {
+	r, src, exact := fallbackCard().Priced("claude-opus-4-8")
+	if !exact || src != "claude-opus-4-8" || r.Input != 2 {
+		t.Fatalf("got (%v, %q, %v), want the model's own rate", r, src, exact)
+	}
+}
+
+// The case that motivated fallbacks: a model released after this binary was
+// built inherits its family's current generation instead of costing nothing.
+func TestPriced_UnlistedModelBorrowsFromItsFamily(t *testing.T) {
+	rc := fallbackCard()
+	for _, m := range []string{"claude-opus-6", "claude-opus-9-1", "CLAUDE-OPUS-6[1m]"} {
+		r, src, exact := rc.Priced(m)
+		if exact {
+			t.Errorf("%q: reported exact, want an estimate", m)
+		}
+		if src != "claude-opus-4-8" || r.Input != 2 {
+			t.Errorf("%q: priced via %q (input %v), want claude-opus-4-8 (2)", m, src, r.Input)
+		}
+	}
+	// And the estimate reaches the money: 1Mtok input at the borrowed $2 rate.
+	if got := rc.CostUSD("claude-opus-6", Usage{Input: 1_000_000}); !approx(got, 2) {
+		t.Errorf("CostUSD = %v, want 2 (estimated, not 0)", got)
+	}
+}
+
+func TestPriced_UnknownFamilyUsesDefault(t *testing.T) {
+	r, src, exact := fallbackCard().Priced("claude-atlas-1")
+	if exact || src != "claude-fable-5" || r.Input != 10 {
+		t.Fatalf("got (%v, %q, %v), want the default fallback claude-fable-5", r, src, exact)
+	}
+}
+
+// A family prefix must match a whole segment, so "claude-opusx-1" is a new
+// family rather than an Opus.
+func TestPriced_FamilyPrefixMatchesWholeSegment(t *testing.T) {
+	if _, src, _ := fallbackCard().Priced("claude-opusx-1"); src != "claude-fable-5" {
+		t.Fatalf("priced via %q, want the default (not the claude-opus family)", src)
+	}
+}
+
+// An empty id is corrupt input, not a new release — it must never borrow a rate,
+// or a malformed transcript line would silently bill at the default.
+func TestPriced_EmptyModelNeverBorrows(t *testing.T) {
+	r, src, exact := fallbackCard().Priced("")
+	if exact || src != "" || r.Input != 0 {
+		t.Fatalf("got (%v, %q, %v), want no rate at all", r, src, exact)
+	}
+}
+
+// Estimation is opt-in per card: with no fallbacks table, the pre-fallback
+// behavior (unknown model → 0) is preserved exactly.
+func TestPriced_NoFallbacksConfiguredStaysZero(t *testing.T) {
+	if _, _, exact := testCard().Priced("claude-opus-6"); exact {
+		t.Error("reported exact for an unlisted model")
+	}
+	if got := testCard().CostUSD("claude-opus-6", Usage{Input: 1_000_000}); got != 0 {
+		t.Errorf("CostUSD = %v, want 0 when no fallbacks are configured", got)
+	}
+}
+
 func TestLoad_ParsesCard(t *testing.T) {
 	data := []byte(`{
 		"version": "v1", "currency": "usd", "unit": "per_mtok",
@@ -173,8 +248,26 @@ func TestLoad_RealRateCard(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load real card: %v", err)
 	}
-	if len(rc.Models) == 0 {
-		t.Fatal("real card has no models")
+	// A floor, not an exact count: the card only grows in normal operation, and
+	// a truncating edit (a bad merge, a mangled jq filter) would otherwise leave
+	// a card that still parses while silently pricing most usage by fallback.
+	// Lower this deliberately if models are ever genuinely retired.
+	const minModels = 12
+	if len(rc.Models) < minModels {
+		t.Fatalf("real card has %d models, want >= %d — did an edit drop some?",
+			len(rc.Models), minModels)
+	}
+
+	// The families the tool is expected to price outright rather than estimate.
+	// Losing one is invisible at runtime: usage just starts resolving through
+	// `fallbacks` instead, at a neighbouring model's rate.
+	for _, must := range []string{
+		"claude-opus-5", "claude-opus-4-8", "claude-sonnet-5", "claude-haiku-4-5",
+		"claude-fable-5",
+	} {
+		if _, ok := rc.Models[must]; !ok {
+			t.Errorf("real card is missing %q — its usage would be estimated, not priced", must)
+		}
 	}
 	for name, r := range rc.Models {
 		if r.Input <= 0 || r.Output <= 0 {
@@ -183,6 +276,32 @@ func TestLoad_RealRateCard(t *testing.T) {
 		got := rc.CostUSD(name, Usage{Input: 1_000_000})
 		if !approx(got, r.Input) {
 			t.Errorf("model %q: 1Mtok input cost %v, want %v", name, got, r.Input)
+		}
+	}
+
+	// Every fallback must point at a model the card actually carries. A stale or
+	// typo'd target resolves to no rate, which would silently restore the very
+	// "new model costs $0.00" bug the table exists to prevent.
+	if len(rc.Fallbacks) == 0 {
+		t.Fatal("real card has no fallbacks — a new model would price to 0")
+	}
+	if _, ok := rc.Fallbacks[""]; !ok {
+		t.Error(`no "" default fallback — an unrecognized family would price to 0`)
+	}
+	for fam, target := range rc.Fallbacks {
+		if _, ok := rc.Models[target]; !ok {
+			t.Errorf("fallback %q → %q, which is not a model in this card", fam, target)
+		}
+	}
+
+	// A yet-to-be-released member of each known family must price above zero.
+	for fam := range rc.Fallbacks {
+		if fam == "" {
+			continue
+		}
+		next := fam + "-99"
+		if got := rc.CostUSD(next, Usage{Input: 1_000_000}); got <= 0 {
+			t.Errorf("hypothetical %q priced to %v, want a positive estimate", next, got)
 		}
 	}
 }

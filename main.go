@@ -37,7 +37,7 @@ var pricingData []byte
 //go:embed hooks/prepare-commit-msg hooks/post-commit
 var hookFS embed.FS
 
-const version = "0.2.0"
+const version = "0.3.0"
 
 func main() {
 	if len(os.Args) < 2 {
@@ -151,14 +151,26 @@ func runStatus() error {
 		fmt.Printf("  pending since last commit:  %s   ·   %d tokens   ·   %d requests\n\n",
 			money(res.TotalCostUSD), res.TotalTokens, res.Requests)
 		fmt.Printf("  %-20s %10s %14s %6s\n", "model", "cost", "tokens", "reqs")
+		estimated := 0
 		for _, m := range res.Models {
-			name := m.Model
-			if !rc.Known(name) {
-				name += " (unpriced)"
+			fmt.Printf("  %-20s %10s %14d %6d", m.Model, money(m.CostUSD), m.Tokens, m.Requests)
+			switch {
+			case m.PricedAs != "":
+				estimated++
+				fmt.Printf("   ← est. via %s", m.PricedAs)
+			case !rc.Known(m.Model):
+				fmt.Print("   (unpriced)")
 			}
-			fmt.Printf("  %-20s %10s %14d %6d\n", name, money(m.CostUSD), m.Tokens, m.Requests)
+			fmt.Println()
 		}
 		fmt.Println()
+		if estimated > 0 {
+			// Deliberately status-only: the commit trailer carries the estimate as a
+			// plain number so parsers keep working, and this is where a human finds
+			// out the number was a guess.
+			fmt.Printf("  ! %d model(s) newer than the rate card — cost is an estimate.\n", estimated)
+			fmt.Printf("    Upgrade claude-budget for exact rates (card version %s).\n\n", rc.Version)
+		}
 	}
 
 	fmt.Printf("  config: trailers %s   ·   cost precision %d\n", enabledTrailers(cfg), cfg.Format.CostPrecision)

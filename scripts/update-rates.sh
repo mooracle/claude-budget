@@ -8,9 +8,12 @@
 #   1. Open https://platform.claude.com/docs/en/about-claude/pricing
 #   2. In data/claude-pricing.json, update each model's base `input` and `output`
 #      (per-MTok, USD) and bump the top-level `version` to today's date.
-#   3. Run `make update-rates` (this script) to re-derive the three cache tiers
+#   3. If a new model is now its family's current generation, repoint that family
+#      in the `fallbacks` table — that's the rate stand-in for models newer than
+#      this card, so leaving it stale keeps estimating from the old generation.
+#   4. Run `make update-rates` (this script) to re-derive the three cache tiers
 #      from `input` via the standard Anthropic multipliers below.
-#   4. `go test ./...` and commit the diff.
+#   5. `go test ./...` and commit the diff.
 #
 # Cache multipliers (kept in sync with the rate card's `note` field):
 #   cacheRead    = 0.1  x input
@@ -18,7 +21,8 @@
 #   cacheWrite1h = 2.0  x input
 #
 # `input`, `output`, and the top-level metadata (version/source/note/currency/
-# unit) are preserved untouched; only the three cache tiers are recomputed.
+# unit/fallbacks) are preserved untouched; only the three cache tiers are
+# recomputed.
 set -euo pipefail
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
