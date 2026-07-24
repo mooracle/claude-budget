@@ -1,6 +1,6 @@
 name: rate-card sync
 
-# Weekly: pull current prices from Anthropic, compare against the embedded card,
+# Every 48h: pull current prices from Anthropic, compare against the embedded card,
 # and commit if they differ — which trips rate-card-release.yml, bumping the
 # last version digit and publishing a rebuilt binary.
 #
@@ -18,7 +18,11 @@ name: rate-card sync
 # sync gets an issue, since that means the docs table hasn't caught up yet.
 on:
   schedule:
-    - cron: '0 7 * * 1' # Mondays, 07:00 UTC
+    # Every 48h at 07:00 UTC. Cron has no true "every 48 hours", so this is
+    # odd days of the month — which means a month boundary can put two runs on
+    # consecutive days (e.g. the 31st then the 1st). Harmless: a run with no
+    # price change commits nothing and cuts no release.
+    - cron: '0 7 */2 * *'
   workflow_dispatch:
 
 permissions:

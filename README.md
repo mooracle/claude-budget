@@ -399,7 +399,7 @@ one. Estimates are disclosed in `claude-budget status` only; commit trailers sta
 a plain number so downstream parsers keep working.
 
 **Refreshing the rate card.** Normally you don't — a
-[weekly workflow](.github/workflows/rate-card-check.yml) does it:
+[workflow](.github/workflows/rate-card-check.yml) runs every 48 hours and does it:
 
 ```
 fetch prices → compare → commit → bump patch version → tag → build & publish
