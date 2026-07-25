@@ -215,8 +215,10 @@ func TestSumDuplicates_ThreeLinesKeepsMaxPrecision(t *testing.T) {
 	}
 }
 
-// The summed line lands at the first duplicate's position; later duplicates are
-// dropped while any interleaved non-cost lines stay put.
+// The summed line lands at the LAST duplicate's position; earlier duplicates are
+// dropped while any interleaved non-cost lines stay put. Last matters: git only
+// parses the final paragraph as trailers, so folding backwards would strand the
+// summed line mid-message and demote it to body text.
 func TestSumDuplicates_PositionAndInterleaving(t *testing.T) {
 	in := []string{
 		"Claude-Cost: 0.40",
@@ -225,8 +227,8 @@ func TestSumDuplicates_PositionAndInterleaving(t *testing.T) {
 	}
 	got := SumDuplicates(in, "Claude-Cost")
 	want := []string{
-		"Claude-Cost: 0.60",
 		"Claude-Interactions: 7",
+		"Claude-Cost: 0.60",
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("got %#v, want %#v", got, want)
@@ -257,8 +259,8 @@ func TestSumDuplicates_NonNumericAndModelsUntouched(t *testing.T) {
 	}
 	got := SumDuplicates(in, "Claude-Cost")
 	want := []string{
-		"Claude-Cost: 0.60",
 		"Claude-Cost-Models: claude-opus-4=0.40",
+		"Claude-Cost: 0.60",
 		"Claude-Cost: n/a",
 	}
 	if !reflect.DeepEqual(got, want) {
@@ -311,5 +313,91 @@ func TestName(t *testing.T) {
 	}
 	if n := Name(nil, KeyInteractions); n != "Claude-Interactions" {
 		t.Fatalf("nil cfg: got %q", n)
+	}
+}
+
+func TestSumModelDuplicates(t *testing.T) {
+	tests := []struct {
+		name    string
+		trailer string // defaults to Claude-Cost-Models when empty
+		in      []string
+		want    []string
+	}{
+		{
+			name: "sums per model and keeps first-seen order",
+			in: []string{
+				"Claude-Cost-Models: opus=0.10,haiku=0.01",
+				"Claude-Cost-Models: haiku=0.02,opus=0.20",
+			},
+			want: []string{"Claude-Cost-Models: opus=0.30,haiku=0.03"},
+		},
+		{
+			name:    "a model only in the later line is appended",
+			trailer: "Claude-Tokens-Models",
+			in: []string{
+				"Claude-Tokens-Models: opus=4000",
+				"Claude-Tokens-Models: opus=8000,sonnet=500",
+			},
+			want: []string{"Claude-Tokens-Models: opus=12000,sonnet=500"},
+		},
+		{
+			name: "greatest precision per model wins",
+			in: []string{
+				"Claude-Cost-Models: opus=1",
+				"Claude-Cost-Models: opus=0.125",
+			},
+			want: []string{"Claude-Cost-Models: opus=1.125"},
+		},
+		{
+			// Last position, so the merged line stays in the trailer paragraph.
+			name: "merged line takes the position of the last duplicate",
+			in: []string{
+				"Claude-Cost-Models: opus=1",
+				"Some-Other: keep me",
+				"Claude-Cost-Models: opus=2",
+			},
+			want: []string{"Some-Other: keep me", "Claude-Cost-Models: opus=3"},
+		},
+		{
+			name: "a single line is untouched",
+			in:   []string{"Claude-Cost-Models: opus=0.10"},
+			want: []string{"Claude-Cost-Models: opus=0.10"},
+		},
+		{
+			name: "an unparseable duplicate leaves everything alone",
+			in: []string{
+				"Claude-Cost-Models: opus=0.10",
+				"Claude-Cost-Models: not a model list",
+			},
+			want: []string{
+				"Claude-Cost-Models: opus=0.10",
+				"Claude-Cost-Models: not a model list",
+			},
+		},
+		{
+			name: "the scalar trailer of the same stem is not touched",
+			in: []string{
+				"Claude-Cost: 0.10",
+				"Claude-Cost: 0.20",
+			},
+			want: []string{"Claude-Cost: 0.10", "Claude-Cost: 0.20"},
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			name := tc.trailer
+			if name == "" {
+				name = "Claude-Cost-Models"
+			}
+			got := SumModelDuplicates(tc.in, name)
+			if len(got) != len(tc.want) {
+				t.Fatalf("got %q, want %q", got, tc.want)
+			}
+			for i := range got {
+				if got[i] != tc.want[i] {
+					t.Errorf("line %d: got %q, want %q", i, got[i], tc.want[i])
+				}
+			}
+		})
 	}
 }

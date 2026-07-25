@@ -37,7 +37,7 @@ var pricingData []byte
 //go:embed hooks/prepare-commit-msg hooks/post-commit
 var hookFS embed.FS
 
-const version = "0.3.0"
+const version = "0.3.1"
 
 func main() {
 	if len(os.Args) < 2 {
@@ -320,21 +320,23 @@ func dispatchTrailer(gitDir, source, msgFile string) error {
 // This path never reads or advances the watermark and always clears the pending
 // marker, so the underlying usage carries forward to the next normal commit.
 func runTrailerSum(gitDir, msgFile string) error {
-	// Sum on whatever the cost trailer is actually named (config-derived, so a
-	// [format.rename] still sums). Config-load failures fall back to the default
-	// name rather than skipping the fold.
-	costName := trailer.Name(nil, trailer.KeyCost)
+	// Fold on whatever the trailers are actually named (config-derived, so a
+	// [format.rename] still folds). Config-load failures fall back to the default
+	// names rather than skipping the fold. Same helper as the normal path, so a
+	// squash and an amend collapse duplicates identically — and every trailer
+	// kind folds here, not just cost.
+	var cfg *config.Config
 	if root, err := gitutil.RepoRoot(); err == nil {
-		if cfg, err := config.Load(root); err == nil {
-			costName = trailer.Name(cfg, trailer.KeyCost)
+		if loaded, err := config.Load(root); err == nil {
+			cfg = loaded
 		} else {
 			fmt.Fprintln(os.Stderr, "claude-budget trailer: load config:", err)
 		}
 	}
 	if cur, err := os.ReadFile(msgFile); err != nil {
 		fmt.Fprintf(os.Stderr, "claude-budget trailer: read commit message %q: %v\n", msgFile, err)
-	} else if summed := strings.Join(trailer.SumDuplicates(strings.Split(string(cur), "\n"), costName), "\n"); summed != string(cur) {
-		if err := os.WriteFile(msgFile, []byte(summed), 0o644); err != nil {
+	} else if folded, ok := foldDuplicateTrailers(string(cur), cfg); ok {
+		if err := os.WriteFile(msgFile, []byte(folded), 0o644); err != nil {
 			fmt.Fprintln(os.Stderr, "claude-budget trailer: write summed message:", err)
 		}
 	}
@@ -415,9 +417,30 @@ func decideTrailer(res *reader.Result, cfg *config.Config, branch, curMsg string
 	}
 	lines := trailer.Format(res, cfg)
 	if len(lines) == 0 {
+		// Nothing new to attribute, but the message can still arrive carrying
+		// duplicates — a squash concatenation, or a reused message handed back
+		// via -m. Fold those even when there is no fresh usage to append, or a
+		// duplicate survives purely because the scan came up empty.
+		if folded, ok := foldDuplicateTrailers(curMsg, cfg); ok {
+			return trailerDecision{newMsg: folded, changed: true}
+		}
 		return trailerDecision{newMsg: curMsg}
 	}
 	newMsg, changed := appendTrailerBlock(curMsg, lines)
+	// The message can already carry trailers from an earlier commit. git hands
+	// the hook source=message (so, this path) whenever the text came from -m/-F,
+	// including the common amend idiom
+	//
+	//	git commit --amend -m "$(git log -1 --format=%B)"
+	//
+	// where that text still has the previous Claude-Cost line. appendTrailerBlock
+	// only recognises a byte-identical block, so once fresh usage lands the new
+	// value differs and a second cost line gets appended. Fold them into one, the
+	// same way the rebase/squash path does — the amended commit then carries the
+	// total of both, which is what it actually cost.
+	if folded, ok := foldDuplicateTrailers(newMsg, cfg); ok {
+		newMsg, changed = folded, true
+	}
 	return trailerDecision{
 		newMsg:  newMsg,
 		changed: changed,
@@ -427,6 +450,24 @@ func decideTrailer(res *reader.Result, cfg *config.Config, branch, curMsg string
 			LastRequestID: res.MaxRequestID,
 		},
 	}
+}
+
+// foldDuplicateTrailers collapses repeated single-number trailers in msg into one
+// summed line each, reusing the same fold the rebase/squash path applies. Names
+// are config-derived, so a [format.rename] still folds.
+//
+// Scalar trailers fold by summing the number; the "-Models" aggregates fold by
+// summing per model, since their value is a "model=value,..." list.
+func foldDuplicateTrailers(msg string, cfg *config.Config) (string, bool) {
+	lines := strings.Split(msg, "\n")
+	for _, key := range []string{trailer.KeyCost, trailer.KeyTokens, trailer.KeyInteractions} {
+		lines = trailer.SumDuplicates(lines, trailer.Name(cfg, key))
+	}
+	for _, key := range []string{trailer.KeyCostModels, trailer.KeyTokensModels} {
+		lines = trailer.SumModelDuplicates(lines, trailer.Name(cfg, key))
+	}
+	folded := strings.Join(lines, "\n")
+	return folded, folded != msg
 }
 
 // appendTrailerBlock inserts the trailer lines as a blank-line-separated block at

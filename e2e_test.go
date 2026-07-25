@@ -614,3 +614,129 @@ func TestE2E_VerboseScissorsTrailerSurvives(t *testing.T) {
 		t.Fatalf("trailer is below the scissors cut line (git would discard it):\n%s", got)
 	}
 }
+
+// Amending with the previous message handed back via -m — `git commit --amend
+// -m "$(git log -1 --format=%B)"` — is reported to the hook as source=message,
+// so it takes the normal append path with a message that already carries
+// trailers. Once fresh usage has landed the new values differ from the old, so
+// an exact-match idempotency check appends a second set. They must fold instead.
+func TestE2E_AmendReusingMessageFoldsTrailers(t *testing.T) {
+	r := newE2ERepo(t)
+	r.seed("main", usageRec{e2eTs1, "r1", "claude-opus-4-8", 0, 4000}) // 0.10
+	r.commit("first", "a.txt", "a")
+	old := r.headMessage()
+	if n := strings.Count(old, "Claude-Cost:"); n != 1 {
+		t.Fatalf("setup: %d cost trailers, want 1:\n%s", n, old)
+	}
+
+	// Usage keeps arriving while the message is being fixed up.
+	r.seed("main", usageRec{e2eTs2, "r2", "claude-opus-4-8", 0, 8000}) // 0.20
+	r.run(r.root, "git", "commit", "-q", "--amend", "-m", old)
+
+	msg := r.headMessage()
+	if n := strings.Count(msg, "Claude-Cost:"); n != 1 {
+		t.Fatalf("%d cost trailers, want 1 (folded):\n%s", n, msg)
+	}
+	if !strings.Contains(msg, "Claude-Cost: 0.30") {
+		t.Errorf("want the two costs summed to 0.30:\n%s", msg)
+	}
+}
+
+// The same fold has to cover every enabled trailer, including the "-Models"
+// aggregates, whose value is a model=value list rather than a bare number.
+func TestE2E_AmendFoldsEveryTrailerKind(t *testing.T) {
+	r := newE2ERepo(t)
+	r.writeFile(".claude-budget.toml",
+		"[trailers]\ncost = true\ncostModels = true\ntokens = true\ntokensModels = true\ninteractions = true\n")
+	r.run(r.root, "git", "add", ".claude-budget.toml")
+	r.seed("main", usageRec{e2eTs1, "r1", "claude-opus-4-8", 0, 4000})
+	r.commit("first", "a.txt", "a")
+	old := r.headMessage()
+
+	r.seed("main", usageRec{e2eTs2, "r2", "claude-opus-4-8", 0, 8000})
+	r.run(r.root, "git", "commit", "-q", "--amend", "-m", old)
+
+	msg := r.headMessage()
+	for _, name := range []string{
+		"Claude-Cost:", "Claude-Cost-Models:", "Claude-Tokens:",
+		"Claude-Tokens-Models:", "Claude-Interactions:",
+	} {
+		if n := strings.Count(msg, name); n != 1 {
+			t.Errorf("%s appears %d times, want 1:\n%s", name, n, msg)
+		}
+	}
+	for _, want := range []string{
+		"Claude-Cost: 0.30", "Claude-Cost-Models: claude-opus-4-8=0.30",
+		"Claude-Tokens: 12000", "Claude-Tokens-Models: claude-opus-4-8=12000",
+		"Claude-Interactions: 2",
+	} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("missing %q:\n%s", want, msg)
+		}
+	}
+}
+
+// `--amend --no-edit` reports source=commit, which routes to clear — the message
+// is reused untouched, so it must never gain a second trailer either.
+func TestE2E_AmendNoEditKeepsSingleTrailer(t *testing.T) {
+	r := newE2ERepo(t)
+	r.seed("main", usageRec{e2eTs1, "r1", "claude-opus-4-8", 0, 4000})
+	r.commit("first", "a.txt", "a")
+	r.seed("main", usageRec{e2eTs2, "r2", "claude-opus-4-8", 0, 8000})
+	r.run(r.root, "git", "commit", "-q", "--amend", "--no-edit")
+
+	if n := strings.Count(r.headMessage(), "Claude-Cost:"); n != 1 {
+		t.Errorf("%d cost trailers, want 1:\n%s", n, r.headMessage())
+	}
+}
+
+// The point of a trailer is that git can parse it. GitHub renders every trailer
+// except Co-authored-by/Signed-off-by as plain text, so "is it a trailer" can
+// only be answered by git — and git only treats the message's FINAL paragraph as
+// trailers. A fold that leaves the cost line mid-message still looks right in a
+// diff while silently being body text, so assert via %(trailers) on every path
+// that writes one.
+func TestE2E_CostIsAParseableGitTrailer(t *testing.T) {
+	costTrailer := func(r *e2eRepo) string {
+		return r.gitOut(r.root, "log", "-1", "--format=%(trailers:key=Claude-Cost,valueonly)")
+	}
+
+	t.Run("plain commit", func(t *testing.T) {
+		r := newE2ERepo(t)
+		r.seed("main", usageRec{e2eTs1, "r1", "claude-opus-4-8", 0, 4000})
+		r.commit("subject\n\nA body paragraph.", "a.txt", "a")
+		if got := strings.TrimSpace(costTrailer(r)); got != "0.10" {
+			t.Errorf("git parsed Claude-Cost as %q, want \"0.10\"\n%s", got, r.headMessage())
+		}
+	})
+
+	t.Run("after an amend fold", func(t *testing.T) {
+		r := newE2ERepo(t)
+		r.seed("main", usageRec{e2eTs1, "r1", "claude-opus-4-8", 0, 4000})
+		r.commit("subject\n\nA body paragraph.", "a.txt", "a")
+		old := r.headMessage()
+		r.seed("main", usageRec{e2eTs2, "r2", "claude-opus-4-8", 0, 8000})
+		r.run(r.root, "git", "commit", "-q", "--amend", "-m", old)
+		if got := strings.TrimSpace(costTrailer(r)); got != "0.30" {
+			t.Errorf("git parsed Claude-Cost as %q, want \"0.30\"\n%s", got, r.headMessage())
+		}
+	})
+
+	// The squash shape: messages and trailers interleaved, so the fold has to
+	// land in the last paragraph or git sees no trailer at all.
+	t.Run("after a squash fold", func(t *testing.T) {
+		r := newE2ERepo(t)
+		r.seed("main", usageRec{e2eTs1, "r1", "claude-opus-4-8", 0, 4000})
+		r.commit("first", "a.txt", "a")
+		r.run(r.root, "git", "commit", "-q", "--allow-empty", "--amend",
+			"-m", "first\n\nClaude-Cost: 0.10\n\nsecond\n\nClaude-Cost: 0.20")
+		msg := r.headMessage()
+		if n := strings.Count(msg, "Claude-Cost:"); n != 1 {
+			t.Fatalf("%d cost trailers, want 1:\n%s", n, msg)
+		}
+		if got := strings.TrimSpace(costTrailer(r)); got != "0.30" {
+			t.Errorf("git parsed Claude-Cost as %q, want \"0.30\" — the fold left it "+
+				"outside the trailer paragraph:\n%s", got, msg)
+		}
+	})
+}
