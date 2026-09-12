@@ -1,17 +1,17 @@
 {
-  "version": "2026-08-13",
+  "version": "2026-09-12",
   "currency": "usd",
   "unit": "per_mtok",
   "source": "https://platform.claude.com/docs/en/about-claude/pricing",
-  "note": "Base input/output are Anthropic list prices. cacheRead = 0.1x input, cacheWrite5m = 1.25x input, cacheWrite1h = 2x input (standard Anthropic cache multipliers). Refresh with `make update-rates` and commit the diff.",
+  "note": "Base input/output and cacheRead are Anthropic list prices from the pricing docs table. cacheRead is 0.1x input on most models and 0.025x on Claude Fable 5.1 / Claude Mythos 5.1, so it is copied from the page rather than derived; cacheWrite5m = 1.25x input and cacheWrite1h = 2x input are derived by `make update-rates`. Refresh with `make fetch-rates` and commit the diff.",
   "fallbacksNote": "Stand-in rates for models newer than this card, so a fresh release is estimated instead of counted as free. Key = model-family prefix, value = the rate-card key to borrow; \"\" is the default for an unrecognized family. Point each family at its CURRENT generation, not its most expensive member — Opus list prices fell 3x from 4.1 to 4.5, so the newest sibling predicts a new release far better than the priciest one. When adding a model above, repoint its family here too.",
   "fallbacks": {
     "claude-opus": "claude-opus-5",
     "claude-sonnet": "claude-sonnet-5",
     "claude-haiku": "claude-haiku-4-5",
-    "claude-fable": "claude-fable-5",
-    "claude-mythos": "claude-mythos-5",
-    "": "claude-fable-5"
+    "claude-fable": "claude-fable-5-1",
+    "claude-mythos": "claude-mythos-5-1",
+    "": "claude-fable-5-1"
   },
   "models": {
     "claude-fable-5": {
@@ -118,6 +118,20 @@
       "cacheRead": 0.08,
       "cacheWrite5m": 1,
       "cacheWrite1h": 1.6
+    },
+    "claude-fable-5-1": {
+      "input": 10,
+      "output": 50,
+      "cacheRead": 0.25,
+      "cacheWrite5m": 12.5,
+      "cacheWrite1h": 20
+    },
+    "claude-mythos-5-1": {
+      "input": 10,
+      "output": 50,
+      "cacheRead": 0.25,
+      "cacheWrite5m": 12.5,
+      "cacheWrite1h": 20
     }
   }
 }

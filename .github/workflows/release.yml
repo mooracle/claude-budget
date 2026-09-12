@@ -3,11 +3,17 @@ name: release
 # Cross-target build runs on every push/PR (the GOOS/GOARCH build smoke test);
 # on a `v*` tag the artifacts are published to a GitHub release and the
 # Homebrew tap formula (mooracle/homebrew-tap) is regenerated and pushed.
+#
+# A tag pushed by rate-card-release.yml is pushed with GITHUB_TOKEN, and such
+# pushes never fire `on: push`. That workflow therefore dispatches this one on
+# the tag ref explicitly; github.ref is then refs/tags/v*, so the tag-gated
+# jobs below run exactly as they would for a hand-pushed tag.
 on:
   push:
     branches: [main]
     tags: ['v*']
   pull_request:
+  workflow_dispatch:
 
 # Least privilege by default: only the release job needs write (it creates the
 # GitHub release). check/build run on every PR and need read-only.
@@ -19,8 +25,8 @@ jobs:
     name: vet + test
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
       - run: go vet ./...
@@ -41,8 +47,8 @@ jobs:
           - { goos: windows, goarch: amd64 }
           - { goos: windows, goarch: arm64 }
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
       - name: build
@@ -57,7 +63,7 @@ jobs:
           go build -trimpath -ldflags "-s -w" -o "$out" .
           echo "ARTIFACT=$out" >> "$GITHUB_ENV"
       - name: upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: ${{ env.ARTIFACT }}
           path: ${{ env.ARTIFACT }}
@@ -71,12 +77,12 @@ jobs:
       contents: write
     steps:
       - name: download artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           path: dist
           merge-multiple: true
       - name: publish
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           files: dist/*
           generate_release_notes: true
@@ -93,14 +99,14 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: check out claude-budget (for the render script)
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
       - name: download built binaries
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           path: dist
           merge-multiple: true
       - name: check out the tap
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           repository: mooracle/homebrew-tap
           token: ${{ secrets.HOMEBREW_TAP_TOKEN }}

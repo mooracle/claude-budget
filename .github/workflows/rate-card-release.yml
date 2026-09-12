@@ -3,19 +3,26 @@ name: rate-card release
 # The rate card is embedded at build time (`go:embed data/claude-pricing.json`),
 # so new prices only reach users through a new binary. This closes that gap:
 # when the card lands on main with a bumped `version`, cut a patch release and
-# let release.yml build and publish it — no hand-cut release for a price change.
+# have release.yml build and publish it — no hand-cut release for a price change.
 #
 # data/claude-pricing.json is the single trigger file. The version-bump commit
 # this job pushes touches main.go only, so the path filter keeps it from
 # re-triggering itself.
+#
+# Two ways in: a human pushing a card change to main trips `on: push`; the
+# scheduled sync (rate-card-check.yml) pushes with GITHUB_TOKEN, which fires no
+# `on: push`, so it starts this via workflow_dispatch instead. The same rule
+# applies one step down — the tag pushed here is also GITHUB_TOKEN's, so
+# release.yml is dispatched explicitly on that tag at the end.
 on:
   push:
     branches: [main]
     paths: ['data/claude-pricing.json']
-  workflow_dispatch: # re-run if a release was missed
+  workflow_dispatch: # started by rate-card-check.yml, or by hand if a release was missed
 
 permissions:
-  contents: write
+  contents: write # push the version bump and the tag
+  actions: write  # start release.yml on the new tag
 
 concurrency:
   group: rate-card-release
@@ -26,11 +33,11 @@ jobs:
     name: tag a patch release for the new card
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 2 # need the previous commit to diff the card version
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
 
@@ -89,6 +96,7 @@ jobs:
 
       - name: Bump patch version, tag, and push
         if: steps.card.outputs.changed == 'true'
+        id: bump
         run: |
           set -euo pipefail
           cur=$(sed -n 's/^const version = "\(.*\)"$/\1/p' main.go)
@@ -109,7 +117,8 @@ jobs:
             exit 0
           fi
 
-          if git rev-parse -q --verify "refs/tags/v${new}" >/dev/null; then
+          # Ask the remote, not the clone: a fetch-depth 2 checkout carries no tags.
+          if git ls-remote --exit-code --tags origin "refs/tags/v${new}" >/dev/null; then
             echo "::error::tag v${new} already exists — bump main.go manually"
             exit 1
           fi
@@ -133,6 +142,17 @@ jobs:
           git tag "v${new}"
           # Push the commit first: if the tag landed alone and the push then
           # failed, release.yml would build a binary whose embedded version
-          # const disagrees with its own tag.
-          git push origin HEAD:main
+          # const disagrees with its own tag. Push to the ref this run is on,
+          # so a workflow_dispatch from a branch does not write to main.
+          git push origin "HEAD:${GITHUB_REF_NAME}"
           git push origin "v${new}"
+          echo "tag=v${new}" >> "$GITHUB_OUTPUT"
+
+      # The tag was pushed with GITHUB_TOKEN, so release.yml's `on: push: tags`
+      # does not fire for it. Dispatch release.yml on the tag ref instead; its
+      # jobs key off github.ref, which is refs/tags/v* for a dispatch on a tag.
+      - name: Build and publish the release
+        if: steps.bump.outputs.tag != ''
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh workflow run release.yml --ref "${{ steps.bump.outputs.tag }}"

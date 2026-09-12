@@ -8,7 +8,7 @@
 #
 # Parsing a human-facing page is inherently brittle, so nothing is written until
 # the scrape passes the checks in validate(): most importantly, the table gives
-# the cache tiers *explicitly*, and they must equal input x 0.1 / 1.25 / 2. That
+# the cache-write tiers *explicitly*, and they must equal input x 1.25 / 2. That
 # is redundant data, which makes it a genuine column-alignment check — if the
 # docs gain, lose, or reorder a column, the arithmetic stops matching and the
 # run aborts instead of writing garbage rates into everyone's commit trailers.
@@ -17,9 +17,12 @@
 #   ./scripts/fetch-rates.sh --dry-run  # print the diff, write nothing
 #   PRICING_MD_FILE=x.md ./scripts/fetch-rates.sh --dry-run   # parse a local file
 #
-# Cache tiers are not taken from the page: after the base rates land, the
-# existing update-rates.sh re-derives them, keeping one source of truth for the
-# multipliers.
+# Three numbers per model come from the page: input, output, and cacheRead.
+# The cache-read multiplier is no longer uniform (0.1x on most models, 0.025x on
+# Claude Fable 5.1 and Claude Mythos 5.1), so cacheRead has to be taken from the
+# table rather than derived. The two write tiers are still a fixed multiple of
+# input on every model; update-rates.sh re-derives those after the base rates
+# land, keeping one source of truth for the write multipliers.
 set -euo pipefail
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -47,7 +50,17 @@ fi
 # "| Claude ...", but carry three data cells rather than six — the cell count is
 # what keeps them out, so their (discounted, and much lower) rates can never be
 # mistaken for list prices.
+#
+# A cell is read as its first "$<number>" and nothing else. Cells can carry a
+# footnote marker after the unit ("$0.25 / MTok1" — the "1" points at a note
+# below the table), and stripping every non-digit would fold that marker into
+# the price (0.251). A cell with no dollar amount parses as 0 and the row is
+# dropped by the input/output > 0 filter.
 awk -F'|' '
+  function dollars(c,   m) {
+    if (match(c, /\$[0-9]+(\.[0-9]+)?/)) { m = substr(c, RSTART + 1, RLENGTH - 1); return m + 0 }
+    return 0
+  }
   /^\| *Claude / {
     if (NF < 8) next                      # 6 data cells + leading/trailing empties
     name = $2
@@ -59,17 +72,15 @@ awk -F'|' '
 
     id = tolower(name); gsub(/\./, "-", id); gsub(/ +/, "-", id)
 
-    split("", v)
-    for (i = 3; i <= 7; i++) { c = $i; gsub(/[^0-9.]/, "", c); v[i] = c + 0 }
     # $3 input, $4 5m write, $5 1h write, $6 cache read, $7 output
-    printf "%s\t%s\t%s\t%s\t%s\t%s\n", id, v[3], v[7], v[4], v[5], v[6]
+    printf "%s\t%s\t%s\t%s\t%s\t%s\n", id, dollars($3), dollars($7), dollars($4), dollars($5), dollars($6)
   }
 ' "$raw" \
 | jq -R -s '
     [ split("\n")[] | select(length > 0) | split("\t")
       | {id: .[0], input: (.[1]|tonumber), output: (.[2]|tonumber),
          w5m: (.[3]|tonumber), w1h: (.[4]|tonumber), read: (.[5]|tonumber)} ]
-    # One model can occupy two rows (Claude Sonnet 5 carries an introductory
+    # One model can occupy two rows (Claude Sonnet 5 carried an introductory
     # price alongside its standard one). The card documents list prices, so the
     # higher of the two wins — which is also the conservative choice, since an
     # over-estimate can never understate a commit.
@@ -86,13 +97,20 @@ validate() {
     return 1
   fi
 
-  # Column-alignment check against the table's own cache columns.
+  # Column-alignment check against the table's own cache columns. The write
+  # tiers are a fixed multiple of input on every model. Cache read is one of two
+  # published multipliers (0.1x, or 0.025x on Fable 5.1 / Mythos 5.1); a third
+  # value means either a new tier or a misread column, and both deserve a look
+  # before it ships — add it here once confirmed against the page.
   local bad
   bad=$(jq -r '
     to_entries[] | select(
-      ((.value.input * 1.25) - .value.w5m  | fabs) > 0.011 or
-      ((.value.input * 2.0 ) - .value.w1h  | fabs) > 0.011 or
-      ((.value.input * 0.1 ) - .value.read | fabs) > 0.011 or
+      ((.value.input * 1.25) - .value.w5m | fabs) > 0.011 or
+      ((.value.input * 2.0 ) - .value.w1h | fabs) > 0.011 or
+      (
+        (((.value.input * 0.1  ) - .value.read | fabs) > 0.011) and
+        (((.value.input * 0.025) - .value.read | fabs) > 0.011)
+      ) or
       .value.output <= .value.input
     ) | "  \(.key): in=\(.value.input) out=\(.value.output) 5m=\(.value.w5m) 1h=\(.value.w1h) read=\(.value.read)"
   ' "$scraped")
@@ -123,6 +141,8 @@ diff_report=$(jq -r --slurpfile s "$scraped" '
       | if $o == null then "  + \($e.key): $\($e.value.input)/$\($e.value.output) (new)"
         elif ($o.input != $e.value.input or $o.output != $e.value.output)
         then "  ~ \($e.key): $\($o.input)/$\($o.output) -> $\($e.value.input)/$\($e.value.output)"
+        elif ($o.cacheRead != $e.value.read)
+        then "  ~ \($e.key): cache read $\($o.cacheRead) -> $\($e.value.read)"
         else empty end))
   | .[]' "$card")
 
@@ -137,14 +157,13 @@ if $dry_run; then
   exit 0
 fi
 
-# Merge base rates in, stamp the version, and let update-rates.sh re-derive the
-# cache tiers. Everything else in the card — fallbacks, notes, source — is
-# preserved: `*` merges per key rather than replacing the object.
+# Merge the scraped rates in, stamp the version, and let update-rates.sh
+# re-derive the write tiers. Everything else in the card — fallbacks, notes,
+# source — is preserved: `*` merges per key rather than replacing the object.
 tmp="$(mktemp)"
 jq --slurpfile s "$scraped" --arg today "$(date -u +%Y-%m-%d)" '
   .version = $today
-  | .models = (.models + ($s[0] | map_values({input: .input, output: .output}))
-               | with_entries(.value = ((.value) + {})))
+  | .models = (.models + ($s[0] | map_values({input: .input, output: .output, cacheRead: .read})))
   | .models |= with_entries(
       .value = {input: .value.input, output: .value.output,
                 cacheRead: (.value.cacheRead // 0),

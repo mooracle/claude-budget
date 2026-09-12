@@ -408,7 +408,7 @@ fetch prices → compare → commit → bump patch version → tag → build & p
 To run the fetch by hand (requires [`jq`](https://jqlang.github.io/jq/)):
 
 ```sh
-make fetch-rates                  # pull current prices, re-derive cache tiers
+make fetch-rates                  # pull current prices, re-derive cache-write tiers
 ./scripts/fetch-rates.sh --dry-run  # show what would change, write nothing
 ```
 
@@ -419,36 +419,34 @@ nodes disconnected from any model name. The only machine-readable source is the
 [pricing docs](https://platform.claude.com/docs/en/about-claude/pricing) table,
 so `fetch-rates.sh` parses that. Parsing a human-facing page is brittle, so
 nothing is written unless the scrape passes validation — most importantly, the
-table lists the cache tiers *explicitly*, and they must equal `input` × 0.1 /
-1.25 / 2. That redundancy makes it a real column-alignment check: if the docs
-gain, lose, or reorder a column the arithmetic stops matching and the run aborts
-rather than writing bad rates into permanent commit trailers. Models on the page
-twice (Claude Sonnet 5 carries an introductory price) resolve to the higher —
-list — rate, matching the card's convention.
+table lists the cache tiers *explicitly*, and the write tiers must equal `input`
+× 1.25 / 2 while the read tier must be one of the published multipliers (0.1×,
+or 0.025× on Claude Fable 5.1 and Claude Mythos 5.1). That redundancy makes it a
+real column-alignment check: if the docs gain, lose, or reorder a column the
+arithmetic stops matching and the run aborts rather than writing bad rates into
+permanent commit trailers. Because the read multiplier differs per model,
+`cacheRead` is copied from the page; only the two write tiers are derived.
 
-Hand-editing still works if you'd rather: change `input` / `output`, bump
-`version`, `make update-rates` to re-derive the cache tiers, `go test ./...`.
-Either way, **if a new model is now its family's current generation, repoint that
-family in `fallbacks`** (e.g. `"claude-opus": "claude-opus-6"`) — that isn't
-inferred. The tests fail if a `fallbacks` entry names a model the card lacks.
+Hand-editing still works if you'd rather: change `input` / `output` (and
+`cacheRead`, if the model isn't on the 0.1× multiplier), bump `version`,
+`make update-rates` to re-derive the write tiers, `go test ./...`. Either way,
+**if a new model is now its family's current generation, repoint that family in
+`fallbacks`** (e.g. `"claude-opus": "claude-opus-6"`) — that isn't inferred. The
+tests fail if a `fallbacks` entry names a model the card lacks.
 
-Anything the models API lists that the docs table hasn't caught up on yet gets an
-issue opened, and fallback estimation covers users until it lands.
+The whole chain runs on the default `GITHUB_TOKEN`; no secrets to set up. A push
+made with that token never fires another workflow's `on: push`, so each stage
+starts the next explicitly with `gh workflow run` (the `workflow_dispatch`
+exception to that rule) rather than relying on the push trigger.
 
-> **One-time setup for the automated chain:** a commit pushed with the default
-> `GITHUB_TOKEN` does not trigger other workflows, so add a fine-grained PAT with
-> `contents: write` as the `RELEASE_PAT` secret, plus `ANTHROPIC_API_KEY` for the
-> new-model check. Without `RELEASE_PAT` the sync still commits, but the release
-> must be started by hand.
-
-Merging that to `main` is the whole release: because the card is embedded at
-build time, new prices only reach users through a new binary, so
+Merging a card change to `main` is the whole release: because the card is
+embedded at build time, new prices only reach users through a new binary, so
 [`rate-card-release.yml`](.github/workflows/rate-card-release.yml) watches
 `data/claude-pricing.json`, and when its `version` changes it runs the tests,
-bumps the patch version in `main.go`, and pushes a `v*` tag —
-[`release.yml`](.github/workflows/release.yml) then builds every target and
-updates the Homebrew tap. Editing the card *without* bumping `version` (a note
-tweak, a re-derive) releases nothing.
+bumps the patch version in `main.go`, pushes a `v*` tag, and starts
+[`release.yml`](.github/workflows/release.yml) on it — that builds every target
+and updates the Homebrew tap. Editing the card *without* bumping `version` (a
+note tweak, a re-derive) releases nothing.
 
 ## Building from source
 
@@ -462,7 +460,7 @@ The `Makefile` wraps the common developer tasks:
 make build        # build the local binary
 make check        # vet + build + test gate (run before committing)
 make build-all    # cross-compile every release target into dist/
-make update-rates # re-derive cache-tier prices (requires jq)
+make update-rates # re-derive cache-write tiers (requires jq)
 make clean        # remove build output
 ```
 
